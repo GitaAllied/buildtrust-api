@@ -20,7 +20,7 @@ const allowedOrigins = [
   'http://localhost:3001',
   'http://localhost:8080',
   'https://buildtrust.vercel.app',
-  'https://build-trust-frontend.vercel.app',
+  'https://buildtrust-one.vercel.app',
   // other allowed origins...
 ];
 
