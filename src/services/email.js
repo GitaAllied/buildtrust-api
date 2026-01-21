@@ -1,8 +1,7 @@
 import crypto from "crypto";
-import nodemailer from "nodemailer";
-import sgTransport from "nodemailer-sendgrid-transport";
 import fs from "fs";
 import path from "path";
+import https from "https";
 
 // Generate secure verification token
 export const generateVerificationToken = () => {
@@ -22,105 +21,7 @@ const getLogoBase64 = () => {
   }
 };
 
-// Cache transporter to avoid recreating for every email
-let cachedTransporter = null;
-let transporterVerified = false;
-
-// Create transporter based on environment
-const createTransporter = async () => {
-  // Return cached transporter if already verified
-  if (cachedTransporter && transporterVerified) {
-    return cachedTransporter;
-  }
-
-  // Priority 1: SendGrid (for Render production where Gmail is blocked)
-  if (process.env.SENDGRID_API_KEY) {
-    console.log("📧 Using SendGrid transporter (recommended for production)...");
-    const transporter = nodemailer.createTransport(
-      sgTransport({
-        auth: {
-          api_key: process.env.SENDGRID_API_KEY,
-        },
-      })
-    );
-
-    // Fire and forget verification
-    Promise.race([
-      transporter.verify(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("Verification timeout")), 3000))
-    ])
-      .then(() => {
-        console.log("📧 SendGrid transporter verified!");
-        transporterVerified = true;
-      })
-      .catch(err => {
-        console.warn("⚠️ SendGrid verification skipped (will try to send anyway):", err.message);
-        transporterVerified = true;
-      });
-
-    cachedTransporter = transporter;
-    return transporter;
-  }
-
-  // Priority 2: Custom SMTP
-  if (process.env.SMTP_HOST) {
-    console.log("📧 Using custom SMTP transporter...");
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-      connectionTimeout: 10000,  // 10 seconds
-      socketTimeout: 20000,      // 20 seconds
-      greetingTimeout: 10000,    // 10 seconds
-      logger: false,
-      debug: false
-    });
-
-    cachedTransporter = transporter;
-    transporterVerified = true;
-    return transporter;
-  }
-
-  // Priority 3: Gmail (local development only)
-  console.log("📧 Using Gmail transporter (local development)...");
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_APP_PASSWORD,
-    },
-    connectionTimeout: 10000,  // 10 seconds
-    socketTimeout: 20000,      // 20 seconds
-    greetingTimeout: 10000,    // 10 seconds
-    logger: false,             // Disable nodemailer logging
-    debug: false
-  });
-
-  // Try to verify connection BUT DON'T BLOCK on failure
-  // Fire and forget verification
-  Promise.race([
-    transporter.verify(),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("Verification timeout")), 3000))
-  ])
-    .then(() => {
-      console.log("📧 Gmail transporter verified!");
-      transporterVerified = true;
-    })
-    .catch(err => {
-      console.warn("⚠️ Gmail verification skipped (will try to send anyway):", err.message);
-      // Still mark as verified so we attempt to send emails
-      transporterVerified = true;
-    });
-
-  cachedTransporter = transporter;
-  return transporter;
-};
-
-// Send emails via nodemailer - runs asynchronously without blocking
+// Send emails via Clockly API endpoint
 const sendExternalEmail = async (toEmail, subject, htmlMessage, maxRetries = 3) => {
   // Fire and forget - don't await the email sending
   Promise.resolve().then(async () => {
@@ -130,33 +31,20 @@ const sendExternalEmail = async (toEmail, subject, htmlMessage, maxRetries = 3) 
       try {
         console.log(`📧 Sending email to: ${toEmail} (Attempt ${attempt}/${maxRetries})`);
         
-        const transporter = await createTransporter();
-        
-        const mailOptions = {
-          from: process.env.MAIL_FROM || process.env.GMAIL_USER || 'noreply@buildtrust.africa',
-          to: toEmail,
+        const emailPayload = {
+          email: toEmail,
           subject: subject,
-          html: htmlMessage,
-          text: 'Please view this email in an HTML-compatible email client.',
-          // Add connection pool options
-          pool: true,
-          maxConnections: 1,
-          maxMessages: 100,
-          rateDelta: 1000,
-          rateLimit: 14
+          message: htmlMessage,
+          from: process.env.MAIL_FROM || 'noreply@buildtrust.africa',
         };
 
-        // Set a much longer timeout for the email sending (60 seconds total)
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Email sending timeout after ${60}s`)), 60000)
-        );
-
-        console.log(`  ⏳ Attempting to send via transporter...`);
-        const sendPromise = transporter.sendMail(mailOptions);
-        const info = await Promise.race([sendPromise, timeoutPromise]);
+        console.log(`  ⏳ Attempting to send via Clockly API...`);
+        
+        // Make request to Clockly API
+        const response = await makeClocklyRequest(emailPayload);
         
         console.log(`✅ Email sent successfully to ${toEmail}`);
-        console.log(`📧 Message ID: ${info.messageId}`);
+        console.log(`📧 Clockly Response:`, response);
         return; // Success - exit function
       } catch (err) {
         lastError = err;
@@ -178,6 +66,60 @@ const sendExternalEmail = async (toEmail, subject, htmlMessage, maxRetries = 3) 
   });
   
   return true;
+};
+
+// Helper function to make HTTPS request to Clockly API
+const makeClocklyRequest = (emailData) => {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(emailData);
+    
+    console.log(`📤 Sending payload to Clockly API:`, emailData);
+    
+    const options = {
+      hostname: 'gitaalliedtech.com',
+      path: '/clocklyApp/clockly_email.php',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+      timeout: 30000, // 30 second timeout
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+
+      res.on('end', () => {
+        console.log(`📬 Clockly API response (status ${res.statusCode}):`, data);
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve({
+            statusCode: res.statusCode,
+            body: data,
+          });
+        } else {
+          reject(new Error(`Clockly API returned status ${res.statusCode}: ${data}`));
+        }
+      });
+    });
+
+    req.on('error', (error) => {
+      console.error(`❌ Clockly API connection error:`, error.message);
+      reject(new Error(`Clockly API request failed: ${error.message}`));
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      console.error(`❌ Clockly API request timeout`);
+      reject(new Error('Clockly API request timeout'));
+    });
+
+    req.write(payload);
+    req.end();
+  });
 };
 
 // ------------------------------------------------------------
