@@ -242,19 +242,26 @@ export const updateProfile = async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
     const userId = decoded.userId || decoded.id; // Use actual ID from token
 
-    const { name, bio, phone, location, preferred_contact, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages } = req.body;
+    const { name, bio, phone, location, preferred_contact, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages, setup_completed } = req.body;
+
+    // Get user's role to determine which fields are allowed
+    const [userRows] = await pool.query('SELECT role FROM users WHERE id = ?', [userId]);
+    const userRole = userRows && userRows[0] ? userRows[0].role : null;
 
     // Normalize array inputs to JSON strings for storage if arrays are provided
-    // Provide default values for optional fields to avoid NULL constraint violations
-    const projectTypesValue = Array.isArray(project_types) ? JSON.stringify(project_types) : (project_types || '[]');
-    const preferredCitiesValue = Array.isArray(preferred_cities) ? JSON.stringify(preferred_cities) : (preferred_cities || '[]');
-    const specializationsValue = Array.isArray(specializations) ? JSON.stringify(specializations) : (specializations || '[]');
     const languagesValue = Array.isArray(languages) ? JSON.stringify(languages) : (languages || '[]');
     const yearsExperienceValue = years_experience !== undefined && years_experience !== null ? years_experience : 0;
 
-    // Get user's role to determine which fields are required for completion
-    const [userRows] = await pool.query('SELECT role FROM users WHERE id = ?', [userId]);
-    const userRole = userRows && userRows[0] ? userRows[0].role : null;
+    // Developer-only fields - only process for developers
+    let projectTypesValue = '[]';
+    let preferredCitiesValue = '[]';
+    let specializationsValue = '[]';
+    
+    if (userRole === 'developer') {
+      projectTypesValue = Array.isArray(project_types) ? JSON.stringify(project_types) : (project_types || '[]');
+      preferredCitiesValue = Array.isArray(preferred_cities) ? JSON.stringify(preferred_cities) : (preferred_cities || '[]');
+      specializationsValue = Array.isArray(specializations) ? JSON.stringify(specializations) : (specializations || '[]');
+    }
 
     // Determine if profile is complete based on user role
     let isProfileComplete = false;
@@ -284,15 +291,25 @@ export const updateProfile = async (req, res) => {
       );
     }
 
-    // Allow client to force setup completion (e.g., final submit from setup UI)
-    const forceSetupComplete = req.body && req.body.setup_completed === true;
+    // Allow explicit setup completion request (e.g., from client setup form)
+    const forceSetupComplete = setup_completed === true;
 
-    // Build dynamic query: include setup_completed if profile is complete OR forcibly requested
+    // Build dynamic query based on user role
     let updateSql = `UPDATE users SET 
-        name = ?, bio = ?, phone = ?, location = ?, preferred_contact = ?, 
-        company_type = ?, years_experience = ?, project_types = ?, preferred_cities = ?, 
-        budget_range = ?, working_style = ?, availability = ?, specializations = ?, languages = ? `;
-    const params = [name, bio, phone, location, preferred_contact, company_type, yearsExperienceValue, projectTypesValue, preferredCitiesValue, budget_range, working_style, availability, specializationsValue, languagesValue];
+        name = ?, bio = ?, phone = ?, location = ?, preferred_contact = `, 
+        company_type = ?, years_experience = ?, `;
+    
+    const params = [name, bio, phone, location, preferred_contact, company_type, yearsExperienceValue];
+
+    // Only update developer-specific fields for developers
+    if (userRole === 'developer') {
+      updateSql += `project_types = ?, preferred_cities = ?, budget_range = ?, working_style = ?, availability = ?, specializations = ?, languages = ? `;
+      params.push(projectTypesValue, preferredCitiesValue, budget_range, working_style, availability, specializationsValue, languagesValue);
+    } else {
+      // For clients, set developer fields to defaults
+      updateSql += `project_types = '[]', preferred_cities = '[]', budget_range = NULL, working_style = NULL, availability = NULL, specializations = '[]', languages = ? `;
+      params.push(languagesValue);
+    }
 
     if (isProfileComplete || forceSetupComplete) {
       updateSql += `, setup_completed = TRUE `;
