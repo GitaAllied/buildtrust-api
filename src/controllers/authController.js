@@ -296,7 +296,7 @@ export const updateProfile = async (req, res) => {
 
     // Build dynamic query based on user role
     let updateSql = `UPDATE users SET 
-        name = ?, bio = ?, phone = ?, location = ?, preferred_contact = `, 
+        name = ?, bio = ?, phone = ?, location = ?, preferred_contact = ?, 
         company_type = ?, years_experience = ?, `;
     
     const params = [name, bio, phone, location, preferred_contact, company_type, yearsExperienceValue];
