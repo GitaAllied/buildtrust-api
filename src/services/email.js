@@ -130,6 +130,8 @@ export const sendVerificationEmail = async (
   toEmail,
   verificationToken
 ) => {
+  console.log(`🔐 Starting verification email send process for: ${toEmail}`);
+  
   const verificationUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/verify-email?token=${verificationToken}`;
   const logoUrl = getLogoBase64();
 
@@ -169,11 +171,14 @@ export const sendVerificationEmail = async (
 </div>
   `;
 
-  return await sendExternalEmail(
+  console.log(`📬 Queuing verification email for: ${toEmail}`);
+  const result = await sendExternalEmail(
     toEmail,
     "Verify Your Email - BuildTrust Africa",
     message
   );
+  console.log(`✅ Verification email queued successfully for: ${toEmail}`);
+  return result;
 };
 
 // ------------------------------------------------------------
