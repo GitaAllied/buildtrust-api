@@ -198,6 +198,17 @@ export const completePortfolioSetup = async (req, res) => {
           `UPDATE users SET ${updateFields}, updated_at = NOW() WHERE id = ?`,
           [...updateValues, userId]
         );
+        
+        // Log what was actually stored
+        console.log('✅ [DATABASE] User table updated with:');
+        for (const [field, value] of Object.entries(updateUserData)) {
+          if (value !== undefined) {
+            const displayValue = typeof value === 'string' && value.length > 100 
+              ? value.substring(0, 100) + '...' 
+              : value;
+            console.log(`   📍 ${field}: ${displayValue}`);
+          }
+        }
       }
 
       // Step 2: Store identity documents in user_documents
@@ -495,6 +506,13 @@ export const completePortfolioSetup = async (req, res) => {
           languages: personal?.languages || []
         }
       };
+
+      console.log('✅ [API RESPONSE] Portfolio setup complete:', {
+        userId: userId,
+        preferencesStored: responseData.preferences_saved,
+        documentsCount: responseData.summary.identity_documents,
+        projectsCount: responseData.summary.projects_created
+      });
 
       // Send portfolio created email asynchronously (fire and forget)
       if (userData && userData.email) {
