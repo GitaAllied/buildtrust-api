@@ -6,6 +6,7 @@ import authRoutes from './routes/auth.js';
 import userDocumentsRoutes from './routes/userDocuments.js';
 import projectsRoutes from './routes/projects.js';
 import portfolioRoutes from './routes/portfolio.js';
+import developersRoutes from './routes/developers.js';
 import { initializeDatabase } from './config/dbInit.js';
 import { runMigrations } from './config/migrations.js';
 import fs from 'fs';
@@ -69,6 +70,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userDocumentsRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/portfolio', portfolioRoutes);
+app.use('/api/developers', developersRoutes);
 
 import multer from 'multer';
 

@@ -133,6 +133,31 @@ export const completePortfolioSetup = async (req, res) => {
       if (personal.role === 'developer') {
         updateUserData.company_type = personal.companyType || null;
         updateUserData.years_experience = personal.yearsExperience ? parseInt(personal.yearsExperience.split('-')[0]) : null;
+        
+        // Add preference fields from preferences object
+        if (preferences.projectTypes) {
+          updateUserData.project_types = JSON.stringify(preferences.projectTypes);
+        }
+        if (preferences.preferredCities) {
+          updateUserData.preferred_cities = JSON.stringify(preferences.preferredCities);
+        }
+        if (preferences.budgetRange) {
+          updateUserData.budget_range = preferences.budgetRange;
+        }
+        if (preferences.workingStyle) {
+          updateUserData.working_style = preferences.workingStyle;
+        }
+        if (preferences.availability) {
+          updateUserData.availability = preferences.availability;
+        }
+        if (preferences.specializations) {
+          updateUserData.specializations = JSON.stringify(preferences.specializations);
+        }
+        
+        // Add languages from personal data
+        if (personal.languages && Array.isArray(personal.languages) && personal.languages.length > 0) {
+          updateUserData.languages = JSON.stringify(personal.languages);
+        }
       }
 
       // Build dynamic UPDATE query
