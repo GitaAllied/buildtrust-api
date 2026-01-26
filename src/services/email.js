@@ -258,7 +258,7 @@ export const sendPortfolioCreatedEmail = async (
     <div style="text-align: center; margin-bottom: 30px;">
         <img src="${logoUrl}" alt="BuildTrust Africa" style="max-width: 150px; height: auto;">
     </div>
-    <div style="background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); color: white; padding: 40px 20px; text-align: center; border-radius: 8px 8px 0 0;">
+    <div style="background: linear-gradient(135deg, #226F75 0%, #253E44 100%); color: white; padding: 40px 20px; text-align: center; border-radius: 8px 8px 0 0;">
         <h1 style="font-size: 28px; font-weight: bold; margin: 0 0 10px 0;">🎉 Portfolio Created!</h1>
         <p style="font-size: 14px; opacity: 0.9; margin: 0;">Welcome to BuildTrust Africa's Developer Network</p>
     </div>
@@ -267,16 +267,16 @@ export const sendPortfolioCreatedEmail = async (
         
         <p style="margin-bottom: 20px; font-size: 15px; color: #555;">Congratulations! Your professional portfolio has been successfully created on BuildTrust Africa. You're now visible to clients looking for verified developers like you.</p>
         
-        <div style="background: white; border-left: 4px solid #16a34a; padding: 20px; margin: 20px 0; border-radius: 4px;">
-            <h3 style="margin-top: 0; color: #16a34a; font-size: 16px;">Your Portfolio is Live! 🚀</h3>
+        <div style="background: white; border-left: 4px solid #226F75; padding: 20px; margin: 20px 0; border-radius: 4px;">
+            <h3 style="margin-top: 0; color: #226F75; font-size: 16px;">Your Portfolio is Live! 🚀</h3>
             <p style="margin: 10px 0; font-size: 14px; color: #555;">Your portfolio is now accessible to potential clients on BuildTrust Africa.</p>
             <div style="text-align: center;">
-                <a href="${portfolioUrl}" style="display: inline-block; background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; margin: 15px 0;">View Your Live Portfolio</a>
+                <a href="${portfolioUrl}" style="display: inline-block; background: linear-gradient(135deg, #226F75 0%, #253E44 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; margin: 15px 0;">View Your Live Portfolio</a>
             </div>
         </div>
         
-        <div style="background: #fffbeb; border: 1px solid #fbbf24; padding: 20px; margin: 20px 0; border-radius: 4px;">
-            <h3 style="margin-top: 0; color: #d97706; font-size: 16px;">💡 Attract More Clients</h3>
+        <div style="background: #f0f9ff; border-left: 4px solid #226F75; padding: 20px; margin: 20px 0; border-radius: 4px;">
+            <h3 style="margin-top: 0; color: #226F75; font-size: 16px;">💡 Attract More Clients</h3>
             <p style="margin: 10px 0 15px 0; font-size: 14px; color: #555;">To attract more high-quality projects, we recommend:</p>
             <ul style="margin: 10px 0; padding-left: 20px; font-size: 14px; color: #555;">
                 <li style="margin-bottom: 8px;"><strong>Add More Projects:</strong> Showcase 5+ of your best completed projects with high-quality images</li>
@@ -286,7 +286,7 @@ export const sendPortfolioCreatedEmail = async (
                 <li><strong>Stay Active:</strong> Regularly update your profile and respond quickly to client messages</li>
             </ul>
             <div style="text-align: center; margin-top: 15px;">
-                <a href="${editPortfolioUrl}" style="display: inline-block; background: #d97706; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600;">Update Your Portfolio Now</a>
+                <a href="${editPortfolioUrl}" style="display: inline-block; background: linear-gradient(135deg, #226F75 0%, #253E44 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600;">Update Your Portfolio Now</a>
             </div>
         </div>
         
