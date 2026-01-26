@@ -218,8 +218,11 @@ export const getMe = async (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired session' });
     }
 
-    // Get user data
-    const [users] = await pool.query('SELECT id, email, name, role, created_at, email_verified, setup_completed FROM users WHERE id = ?', [decoded.userId]);
+    // Get user data - fetch ALL user fields
+    const [users] = await pool.query(
+      'SELECT id, email, name, role, phone, bio, location, created_at, email_verified, setup_completed, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages FROM users WHERE id = ?',
+      [decoded.userId]
+    );
 
     if (!Array.isArray(users) || users.length === 0) {
       return res.status(404).json({ error: 'User not found' });
@@ -227,7 +230,37 @@ export const getMe = async (req, res) => {
 
     const user = users[0];
 
-    res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role, created_at: user.created_at, email_verified: user.email_verified || false, setup_completed: Boolean(user.setup_completed || false) } });
+    console.log('📋 getMe - User from DB:', {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      hasPhone: !!user.phone,
+    });
+
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        phone: user.phone || '',
+        bio: user.bio || '',
+        location: user.location || '',
+        created_at: user.created_at,
+        email_verified: user.email_verified || false,
+        setup_completed: Boolean(user.setup_completed || false),
+        company_type: user.company_type || '',
+        years_experience: user.years_experience || 0,
+        project_types: user.project_types ? JSON.parse(user.project_types) : [],
+        preferred_cities: user.preferred_cities ? JSON.parse(user.preferred_cities) : [],
+        budget_range: user.budget_range || '',
+        working_style: user.working_style || '',
+        availability: user.availability || '',
+        specializations: user.specializations ? JSON.parse(user.specializations) : [],
+        languages: user.languages ? JSON.parse(user.languages) : [],
+      }
+    });
   } catch (error) {
     res.status(401).json({ error: 'Invalid token' });
   }
