@@ -62,6 +62,7 @@ export const completePortfolioSetup = async (req, res) => {
     }
     if (req.body.preferences) {
       preferences = typeof req.body.preferences === 'string' ? JSON.parse(req.body.preferences) : req.body.preferences;
+      console.log('✓ Preferences received:', JSON.stringify(preferences));
     }
     if (req.body.identity_metadata) {
       identityMetadata = typeof req.body.identity_metadata === 'string' ? JSON.parse(req.body.identity_metadata) : req.body.identity_metadata;
@@ -171,6 +172,10 @@ export const completePortfolioSetup = async (req, res) => {
         .map(([_, value]) => value);
 
       if (updateFields) {
+        const updatedFields = Object.entries(updateUserData)
+          .filter(([_, value]) => value !== undefined)
+          .map(([key]) => key);
+        console.log('✓ Updating users table with fields:', updatedFields);
         await connection.query(
           `UPDATE users SET ${updateFields}, updated_at = NOW() WHERE id = ?`,
           [...updateValues, userId]
@@ -461,6 +466,15 @@ export const completePortfolioSetup = async (req, res) => {
           projects_created: createdProjectIds.length,
           specializations_added: preferences?.specializations?.length || 0,
           setup_completed: true
+        },
+        preferences_saved: {
+          project_types: preferences?.projectTypes || [],
+          preferred_cities: preferences?.preferredCities || [],
+          budget_range: preferences?.budgetRange || null,
+          working_style: preferences?.workingStyle || null,
+          availability: preferences?.availability || null,
+          specializations: preferences?.specializations || [],
+          languages: personal?.languages || []
         }
       };
 
