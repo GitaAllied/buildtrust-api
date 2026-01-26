@@ -136,28 +136,40 @@ export const completePortfolioSetup = async (req, res) => {
         updateUserData.years_experience = personal.yearsExperience ? parseInt(personal.yearsExperience.split('-')[0]) : null;
         
         // Add preference fields from preferences object
-        if (preferences.projectTypes) {
-          updateUserData.project_types = JSON.stringify(preferences.projectTypes);
-        }
-        if (preferences.preferredCities) {
-          updateUserData.preferred_cities = JSON.stringify(preferences.preferredCities);
-        }
-        if (preferences.budgetRange) {
-          updateUserData.budget_range = preferences.budgetRange;
-        }
-        if (preferences.workingStyle) {
-          updateUserData.working_style = preferences.workingStyle;
-        }
-        if (preferences.availability) {
-          updateUserData.availability = preferences.availability;
-        }
-        if (preferences.specializations) {
-          updateUserData.specializations = JSON.stringify(preferences.specializations);
+        // Check if preferences exist first, then safely extract each field
+        if (preferences) {
+          console.log('🔍 Processing preferences for developer:');
+          
+          if (preferences.projectTypes !== undefined) {
+            updateUserData.project_types = Array.isArray(preferences.projectTypes) ? JSON.stringify(preferences.projectTypes) : (preferences.projectTypes || null);
+            console.log('  ✓ project_types:', preferences.projectTypes);
+          }
+          if (preferences.preferredCities !== undefined) {
+            updateUserData.preferred_cities = Array.isArray(preferences.preferredCities) ? JSON.stringify(preferences.preferredCities) : (preferences.preferredCities || null);
+            console.log('  ✓ preferred_cities:', preferences.preferredCities);
+          }
+          if (preferences.budgetRange !== undefined) {
+            updateUserData.budget_range = preferences.budgetRange || null;
+            console.log('  ✓ budget_range:', preferences.budgetRange);
+          }
+          if (preferences.workingStyle !== undefined) {
+            updateUserData.working_style = preferences.workingStyle || null;
+            console.log('  ✓ working_style:', preferences.workingStyle);
+          }
+          if (preferences.availability !== undefined) {
+            updateUserData.availability = preferences.availability || null;
+            console.log('  ✓ availability:', preferences.availability);
+          }
+          if (preferences.specializations !== undefined) {
+            updateUserData.specializations = Array.isArray(preferences.specializations) ? JSON.stringify(preferences.specializations) : (preferences.specializations || null);
+            console.log('  ✓ specializations:', preferences.specializations);
+          }
         }
         
         // Add languages from personal data
         if (personal.languages && Array.isArray(personal.languages) && personal.languages.length > 0) {
           updateUserData.languages = JSON.stringify(personal.languages);
+          console.log('  ✓ languages:', personal.languages);
         }
       }
 
@@ -170,6 +182,12 @@ export const completePortfolioSetup = async (req, res) => {
       const updateValues = Object.entries(updateUserData)
         .filter(([_, value]) => value !== undefined)
         .map(([_, value]) => value);
+
+      console.log('📊 User data to update:', {
+        fields: Object.keys(updateUserData),
+        totalFields: Object.keys(updateUserData).length,
+        updateUserData: updateUserData
+      });
 
       if (updateFields) {
         const updatedFields = Object.entries(updateUserData)
