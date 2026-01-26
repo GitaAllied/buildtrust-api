@@ -238,3 +238,85 @@ export const sendPasswordResetEmail = async (
     message
   );
 };
+// ------------------------------------------------------------
+// SEND PORTFOLIO CREATION EMAIL
+// ------------------------------------------------------------
+
+export const sendPortfolioCreatedEmail = async (
+  toEmail,
+  developerName,
+  developerId
+) => {
+  console.log(`🎉 Starting portfolio created email send process for: ${toEmail}`);
+  
+  const portfolioUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/developer-profile/${developerId}`;
+  const editPortfolioUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/developer-dashboard`;
+  const logoUrl = getLogoBase64();
+
+  const message = `
+<div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+    <div style="text-align: center; margin-bottom: 30px;">
+        <img src="${logoUrl}" alt="BuildTrust Africa" style="max-width: 150px; height: auto;">
+    </div>
+    <div style="background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); color: white; padding: 40px 20px; text-align: center; border-radius: 8px 8px 0 0;">
+        <h1 style="font-size: 28px; font-weight: bold; margin: 0 0 10px 0;">🎉 Portfolio Created!</h1>
+        <p style="font-size: 14px; opacity: 0.9; margin: 0;">Welcome to BuildTrust Africa's Developer Network</p>
+    </div>
+    <div style="background: #f8f9fa; padding: 40px 20px;">
+        <p style="margin-bottom: 20px; font-size: 15px; color: #555;">Hi <strong>${developerName}</strong>,</p>
+        
+        <p style="margin-bottom: 20px; font-size: 15px; color: #555;">Congratulations! Your professional portfolio has been successfully created on BuildTrust Africa. You're now visible to clients looking for verified developers like you.</p>
+        
+        <div style="background: white; border-left: 4px solid #16a34a; padding: 20px; margin: 20px 0; border-radius: 4px;">
+            <h3 style="margin-top: 0; color: #16a34a; font-size: 16px;">Your Portfolio is Live! 🚀</h3>
+            <p style="margin: 10px 0; font-size: 14px; color: #555;">Your portfolio is now accessible to potential clients on BuildTrust Africa.</p>
+            <div style="text-align: center;">
+                <a href="${portfolioUrl}" style="display: inline-block; background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; margin: 15px 0;">View Your Live Portfolio</a>
+            </div>
+        </div>
+        
+        <div style="background: #fffbeb; border: 1px solid #fbbf24; padding: 20px; margin: 20px 0; border-radius: 4px;">
+            <h3 style="margin-top: 0; color: #d97706; font-size: 16px;">💡 Attract More Clients</h3>
+            <p style="margin: 10px 0 15px 0; font-size: 14px; color: #555;">To attract more high-quality projects, we recommend:</p>
+            <ul style="margin: 10px 0; padding-left: 20px; font-size: 14px; color: #555;">
+                <li style="margin-bottom: 8px;"><strong>Add More Projects:</strong> Showcase 5+ of your best completed projects with high-quality images</li>
+                <li style="margin-bottom: 8px;"><strong>Write a Compelling Bio:</strong> Tell clients what makes you unique and why they should hire you</li>
+                <li style="margin-bottom: 8px;"><strong>Highlight Specializations:</strong> Update your skills and specializations to match client needs</li>
+                <li style="margin-bottom: 8px;"><strong>Get Reviews:</strong> Encourage satisfied clients to leave testimonials on your portfolio</li>
+                <li><strong>Stay Active:</strong> Regularly update your profile and respond quickly to client messages</li>
+            </ul>
+            <div style="text-align: center; margin-top: 15px;">
+                <a href="${editPortfolioUrl}" style="display: inline-block; background: #d97706; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600;">Update Your Portfolio Now</a>
+            </div>
+        </div>
+        
+        <div style="background: white; padding: 20px; margin: 20px 0; border-radius: 4px; border: 1px solid #e0e0e0;">
+            <h4 style="margin-top: 0; color: #226F75; font-size: 15px;">Quick Tips to Get Started:</h4>
+            <ul style="margin: 10px 0; padding-left: 20px; font-size: 14px; color: #555;">
+                <li style="margin-bottom: 6px;">Complete all profile sections for better visibility in search results</li>
+                <li style="margin-bottom: 6px;">Set your availability and preferred project types</li>
+                <li style="margin-bottom: 6px;">Use professional project descriptions and high-resolution images</li>
+                <li>Respond to client inquiries within 24 hours</li>
+            </ul>
+        </div>
+        
+        <div style="height: 1px; background: #e0e0e0; margin: 20px 0;"></div>
+        
+        <p style="margin-bottom: 10px; font-size: 14px; color: #666;">Have questions? Need help? Our support team is here to assist you!</p>
+    </div>
+    <div style="background: white; padding: 30px 20px; text-align: center; border-radius: 0 0 8px 8px; border-top: 1px solid #e0e0e0; font-size: 13px; color: #888;">
+        <p style="margin: 0 0 15px 0;">Thank you for joining BuildTrust Africa's community of verified developers.</p>
+        <p style="margin: 0;"><strong>BuildTrust Africa</strong> - Connecting diaspora Africans with verified developers</p>
+    </div>
+</div>
+  `;
+
+  console.log(`📬 Queuing portfolio created email for: ${toEmail}`);
+  const result = await sendExternalEmail(
+    toEmail,
+    "🎉 Your Portfolio is Live - Start Attracting Clients! - BuildTrust Africa",
+    message
+  );
+  console.log(`✅ Portfolio created email queued successfully for: ${toEmail}`);
+  return result;
+};
