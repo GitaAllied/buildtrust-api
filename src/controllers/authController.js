@@ -128,6 +128,7 @@ export const signup = async (req, res) => {
         role: finalRole,
         setup_completed: false,
         email_verified: false,
+        is_active: 1,
       },
     });
   } catch (error) {
@@ -149,7 +150,7 @@ export const login = async (req, res) => {
 
     // Find user
     const [users] = await pool.query(
-      'SELECT id, email, password, name, role, email_verified, setup_completed FROM users WHERE email = ?',
+      'SELECT id, email, password, name, role, email_verified, setup_completed, is_active FROM users WHERE email = ?',
       [email]
     );
 
@@ -164,6 +165,21 @@ export const login = async (req, res) => {
 
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // If email not verified, instruct client to go to verification route
+    // Coerce DB value which may be 0/1 or '0'/'1' into a number before checking
+    const emailVerifiedFlag = Number(user.email_verified || 0);
+    if (emailVerifiedFlag !== 1) {
+      return res.status(403).json({
+        error: 'Email not verified',
+        message: 'Please verify your email before signing in',
+        redirect: '/verify-email',
+        user: {
+          id: user.id,
+          email: user.email,
+        },
+      });
     }
 
     // Generate JWT token (include role)
@@ -189,6 +205,7 @@ export const login = async (req, res) => {
         role: user.role,
         email_verified: Boolean(user.email_verified || false),
         setup_completed: Boolean(user.setup_completed || false),
+        is_active: Number(user.is_active || 0),
       },
     });
   } catch (error) {
@@ -218,9 +235,9 @@ export const getMe = async (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired session' });
     }
 
-    // Get user data - fetch ALL user fields
+    // Get user data - fetch ALL user fields including is_active
     const [users] = await pool.query(
-      'SELECT id, email, name, role, phone, bio, location, created_at, email_verified, setup_completed, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages FROM users WHERE id = ?',
+      'SELECT id, email, name, role, phone, bio, location, created_at, email_verified, setup_completed, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages, is_active FROM users WHERE id = ?',
       [decoded.userId]
     );
 
@@ -250,6 +267,7 @@ export const getMe = async (req, res) => {
         created_at: user.created_at,
         email_verified: user.email_verified || false,
         setup_completed: Boolean(user.setup_completed || false),
+        is_active: Number(user.is_active || 0),
         company_type: user.company_type || '',
         years_experience: user.years_experience || 0,
         project_types: user.project_types ? JSON.parse(user.project_types) : [],
