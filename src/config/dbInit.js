@@ -408,6 +408,7 @@ export async function initializeDatabase() {
       'completed_projects INT DEFAULT 0',
       'rating DECIMAL(3,2) DEFAULT 0.00',
       'total_reviews INT DEFAULT 0',
+      'trust_score INT DEFAULT NULL',
       'setup_completed BOOLEAN DEFAULT FALSE',
       'preferred_contact VARCHAR(50)',
       'company_type VARCHAR(255)',

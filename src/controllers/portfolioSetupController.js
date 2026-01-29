@@ -15,20 +15,36 @@ const ensureUploadDirExists = (dir) => {
 
 /**
  * Helper function to save a file and return the URL
+ * Handles both multer file objects (with .path) and raw file objects
  */
 const saveUploadedFile = (file, uploadSubdir) => {
   const uploadsDir = path.join(process.cwd(), 'uploads', uploadSubdir);
   ensureUploadDirExists(uploadsDir);
   
-  // Create unique filename to avoid collisions
+  // If file already has a path from multer, move it to final location
+  if (file.path) {
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const filename = `${uniqueSuffix}-${file.originalname}`;
+    const filepath = path.join(uploadsDir, filename);
+    
+    // Move file from temp location to final location
+    try {
+      fs.renameSync(file.path, filepath);
+    } catch (err) {
+      // If rename fails, try copy then delete
+      fs.copyFileSync(file.path, filepath);
+      fs.unlinkSync(file.path);
+    }
+    
+    return `/uploads/${uploadSubdir}/${filename}`;
+  }
+  
+  // Otherwise handle raw file data
   const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  const filename = `${uniqueSuffix}-${file.filename}`;
+  const filename = `${uniqueSuffix}-${file.originalname || file.filename}`;
   const filepath = path.join(uploadsDir, filename);
   
-  // Save file to disk
   fs.writeFileSync(filepath, file.data);
-  
-  // Return URL path relative to uploads
   return `/uploads/${uploadSubdir}/${filename}`;
 };
 
@@ -46,6 +62,16 @@ export const completePortfolioSetup = async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
     const userId = decoded.userId || decoded.id;
 
+    console.log('\n========== 🚀 PORTFOLIO SETUP STARTED ==========');
+    console.log('👤 User ID:', userId);
+    console.log('📨 Request headers:', Object.keys(req.headers));
+    console.log('📦 req.body keys:', req.body ? Object.keys(req.body) : 'EMPTY');
+    console.log('📁 req.files count:', req.files ? req.files.length : 0);
+    if (req.body) {
+      console.log('📝 req.body.personal exists:', !!req.body.personal);
+      console.log('⚙️ req.body.preferences exists:', !!req.body.preferences);
+    }
+
     // Parse form data
     let personal = {};
     let preferences = {};
@@ -58,12 +84,28 @@ export const completePortfolioSetup = async (req, res) => {
 
     // Parse form fields
     if (req.body.personal) {
-      personal = typeof req.body.personal === 'string' ? JSON.parse(req.body.personal) : req.body.personal;
+      try {
+        personal = typeof req.body.personal === 'string' ? JSON.parse(req.body.personal) : req.body.personal;
+        console.log('📝 Personal data received:', Object.keys(personal));
+        console.log('   Fields:', personal);
+      } catch (e) {
+        console.error('❌ Error parsing personal data:', e.message);
+      }
+    } else {
+      console.warn('⚠️ No personal data in req.body');
     }
+    
     if (req.body.preferences) {
-      preferences = typeof req.body.preferences === 'string' ? JSON.parse(req.body.preferences) : req.body.preferences;
-      console.log('✓ Preferences received:', JSON.stringify(preferences));
+      try {
+        preferences = typeof req.body.preferences === 'string' ? JSON.parse(req.body.preferences) : req.body.preferences;
+        console.log('✓ Preferences received:', JSON.stringify(preferences));
+      } catch (e) {
+        console.error('❌ Error parsing preferences:', e.message);
+      }
+    } else {
+      console.warn('⚠️ No preferences in req.body');
     }
+    
     if (req.body.identity_metadata) {
       identityMetadata = typeof req.body.identity_metadata === 'string' ? JSON.parse(req.body.identity_metadata) : req.body.identity_metadata;
     }
@@ -71,18 +113,24 @@ export const completePortfolioSetup = async (req, res) => {
       credentialsMetadata = typeof req.body.credentials_metadata === 'string' ? JSON.parse(req.body.credentials_metadata) : req.body.credentials_metadata;
     }
 
-    // Organize uploaded files
-    if (req.files) {
-      for (const [fieldName, file] of Object.entries(req.files)) {
+    // Organize uploaded files from multer
+    console.log('📁 Total files received via multer:', req.files ? req.files.length : 0);
+    if (req.files && Array.isArray(req.files)) {
+      for (const file of req.files) {
+        const fieldName = file.fieldname;
+        console.log(`  🗂️ Processing file: ${fieldName} (${file.originalname})`);
+        
         if (fieldName.startsWith('identity_')) {
           const docType = fieldName.replace('identity_', '');
           identityFiles[docType] = file;
+          console.log(`    ✓ Identity file ${docType} queued for upload`);
         } else if (fieldName.startsWith('credential_')) {
           const parts = fieldName.replace('credential_', '').split('_');
           const credType = parts.slice(0, -1).join('_');
           const idx = parts[parts.length - 1];
           if (!credentialsFiles[credType]) credentialsFiles[credType] = {};
           credentialsFiles[credType][idx] = file;
+          console.log(`    ✓ Credential file ${credType}[${idx}] queued for upload`);
         } else if (fieldName.startsWith('project_')) {
           const parts = fieldName.replace('project_', '').split('_');
           const projIdx = parts[0];
@@ -91,15 +139,13 @@ export const completePortfolioSetup = async (req, res) => {
             if (!projectMediaFiles[projIdx]) projectMediaFiles[projIdx] = {};
             const mediaIdx = parts[parts.length - 1];
             projectMediaFiles[projIdx][mediaIdx] = file;
-          } else {
-            const fieldType = parts.slice(1).join('_');
-            projectsData[projIdx][fieldType] = req.body[fieldName];
+            console.log(`    ✓ Project ${projIdx} media[${mediaIdx}] queued for upload`);
           }
         }
       }
     }
 
-    // Also get project data from form fields (in case there's no media)
+    // Also get project metadata from form fields (title, description, type, location, budget)
     for (const [key, value] of Object.entries(req.body || {})) {
       if (key.startsWith('project_')) {
         const parts = key.replace('project_', '').split('_');
@@ -111,9 +157,18 @@ export const completePortfolioSetup = async (req, res) => {
         }
       }
     }
+    
+    console.log(`✓ Parsed ${Object.keys(projectsData).length} projects from form data`);
 
-    if (!personal || !userId) {
-      return res.status(400).json({ error: 'Missing required data' });
+    console.log('\n📊 VALIDATION CHECK:');
+    console.log('  personal:', personal);
+    console.log('  Object.keys(personal):', Object.keys(personal));
+    console.log('  personal is empty?:', Object.keys(personal).length === 0);
+    console.log('  userId:', userId);
+    
+    if (!personal || Object.keys(personal).length === 0 || !userId) {
+      console.error('❌ VALIDATION FAILED - Aborting operation');
+      return res.status(400).json({ error: 'Missing required data (personal info or user ID)' });
     }
 
     const connection = await pool.getConnection();
@@ -194,10 +249,18 @@ export const completePortfolioSetup = async (req, res) => {
           .filter(([_, value]) => value !== undefined)
           .map(([key]) => key);
         console.log('✓ Updating users table with fields:', updatedFields);
-        await connection.query(
+        console.log(`   SQL: UPDATE users SET ${updateFields}, updated_at = NOW() WHERE id = ${userId}`);
+        
+        const [result] = await connection.query(
           `UPDATE users SET ${updateFields}, updated_at = NOW() WHERE id = ?`,
           [...updateValues, userId]
         );
+        
+        console.log(`✅ [DATABASE] Update result:`, {
+          affectedRows: result.affectedRows,
+          changedRows: result.changedRows,
+          warningCount: result.warningCount
+        });
         
         // Log what was actually stored
         console.log('✅ [DATABASE] User table updated with:');
@@ -209,6 +272,8 @@ export const completePortfolioSetup = async (req, res) => {
             console.log(`   📍 ${field}: ${displayValue}`);
           }
         }
+      } else {
+        console.warn('⚠️ No fields to update in users table');
       }
 
       // Step 2: Store identity documents in user_documents
@@ -223,22 +288,15 @@ export const completePortfolioSetup = async (req, res) => {
         let fileUrl = null;
         let fileSize = 0;
 
-        // Check if we have an uploaded file
+        // Check if we have an uploaded file from multer
         if (identityFiles[key]) {
           const file = identityFiles[key];
           fileUrl = saveUploadedFile(file, dir);
-          filename = file.filename;
-          fileSize = file.size || file.data.length;
+          filename = file.originalname || file.filename;
+          fileSize = file.size || 0;
           console.log(`✓ Identity file saved: ${filename} at ${fileUrl}`);
-        } else if (identityMetadata[key]) {
-          // Use metadata if available (from previous localStorage)
-          const meta = identityMetadata[key];
-          filename = meta.name || null;
-          fileSize = meta.size || 0;
-          fileUrl = meta.url || `uploaded_${Date.now()}_${filename}`;
-        }
-
-        if (filename) {
+          
+          // Insert into user_documents table
           await connection.query(
             `INSERT INTO user_documents (user_id, type, filename, url, metadata, verified, created_at)
              VALUES (?, ?, ?, ?, ?, ?, NOW())`,
@@ -251,6 +309,27 @@ export const completePortfolioSetup = async (req, res) => {
               false
             ]
           );
+        } else if (identityMetadata[key]) {
+          // Use metadata if available (from previous localStorage without files)
+          const meta = identityMetadata[key];
+          filename = meta.name || null;
+          fileSize = meta.size || 0;
+          fileUrl = meta.url || `uploaded_${Date.now()}_${filename}`;
+          
+          if (filename) {
+            await connection.query(
+              `INSERT INTO user_documents (user_id, type, filename, url, metadata, verified, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+              [
+                userId,
+                type,
+                filename,
+                fileUrl,
+                JSON.stringify({ size: fileSize, originalName: filename }),
+                false
+              ]
+            );
+          }
         }
       }
 
@@ -262,12 +341,12 @@ export const completePortfolioSetup = async (req, res) => {
       ];
 
       for (const { key, type, dir } of credentialTypes) {
-        // Store uploaded files
+        // Store uploaded files from multer
         if (credentialsFiles[key]) {
           for (const [idx, file] of Object.entries(credentialsFiles[key])) {
             const fileUrl = saveUploadedFile(file, dir);
-            const filename = file.filename;
-            const fileSize = file.size || file.data.length;
+            const filename = file.originalname || file.filename;
+            const fileSize = file.size || 0;
             
             await connection.query(
               `INSERT INTO user_documents (user_id, type, filename, url, metadata, verified, created_at)
@@ -380,8 +459,9 @@ export const completePortfolioSetup = async (req, res) => {
               const file = projectMediaFiles[projIdx][mediaIdx];
               try {
                 const fileUrl = saveUploadedFile(file, `projects/${projectId}`);
-                const filename = file.filename;
-                const fileSize = file.size || file.data.length;
+                const filename = file.originalname || file.filename;
+                const fileSize = file.size || 0;
+                const mimeType = file.mimetype || 'application/octet-stream';
 
                 await connection.query(
                   `INSERT INTO project_media (project_id, type, url, filename, size, mime_type, created_at)
@@ -392,7 +472,7 @@ export const completePortfolioSetup = async (req, res) => {
                     fileUrl,
                     filename,
                     fileSize,
-                    file.mimetype || 'application/octet-stream'
+                    mimeType
                   ]
                 );
                 console.log(`✓ Media inserted: ${filename} at ${fileUrl}`);
@@ -470,11 +550,12 @@ export const completePortfolioSetup = async (req, res) => {
         }
       }
 
-      // Step 7: Mark setup as complete
+      // Step 7: Mark setup as complete and set initial trust score
       await connection.query(
-        `UPDATE users SET setup_completed = ?, updated_at = NOW() WHERE id = ?`,
+        `UPDATE users SET setup_completed = ?, trust_score = 25, updated_at = NOW() WHERE id = ?`,
         [true, userId]
       );
+      console.log(`✅ [DATABASE] Setup completed and trust_score set to 25 for user ${userId}`);
 
       // Commit transaction
       await connection.commit();
