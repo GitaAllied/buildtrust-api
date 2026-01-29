@@ -550,12 +550,12 @@ export const completePortfolioSetup = async (req, res) => {
         }
       }
 
-      // Step 7: Mark setup as complete and set initial trust score
+      // Step 7: Mark setup as complete, set initial trust score, and activate user
       await connection.query(
-        `UPDATE users SET setup_completed = ?, trust_score = 25, updated_at = NOW() WHERE id = ?`,
+        `UPDATE users SET setup_completed = ?, trust_score = 25, is_active = 1, updated_at = NOW() WHERE id = ?`,
         [true, userId]
       );
-      console.log(`✅ [DATABASE] Setup completed and trust_score set to 25 for user ${userId}`);
+      console.log(`✅ [DATABASE] Setup completed, trust_score=25, and is_active=1 for user ${userId}`);
 
       // Commit transaction
       await connection.commit();
