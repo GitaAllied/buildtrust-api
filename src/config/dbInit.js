@@ -404,7 +404,7 @@ export async function initializeDatabase() {
       'github VARCHAR(500)',
       'hourly_rate DECIMAL(8,2)',
       'availability_status ENUM("available", "busy", "unavailable") DEFAULT "available"',
-      'years_experience INT DEFAULT 0',
+      'years_experience VARCHAR(255) DEFAULT NULL',
       'completed_projects INT DEFAULT 0',
       'rating DECIMAL(3,2) DEFAULT 0.00',
       'total_reviews INT DEFAULT 0',
@@ -484,7 +484,8 @@ export async function initializeDatabase() {
 
     try {
       // Numeric defaults - allow years_experience to be nullable since it's optional during setup
-      await pool.query("ALTER TABLE users MODIFY COLUMN years_experience INT NULL");
+      // And convert to VARCHAR(255) to store experience range strings like "4-7", "8-15", etc.
+      await pool.query("ALTER TABLE users MODIFY COLUMN years_experience VARCHAR(255) NULL");
     } catch (err) {
       // ignore
     }
