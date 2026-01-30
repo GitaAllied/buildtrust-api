@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import pool from '../config/database.js';
 import { z } from 'zod';
 import { sendVerificationEmail, generateVerificationToken, sendPasswordResetEmail } from '../services/email.js';
+import { lookupIp } from '../services/ipGeo.js';
 
 const signupSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -294,6 +295,31 @@ export const updateProfile = async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
     const userId = decoded.userId || decoded.id; // Use actual ID from token
 
+    // Extract IP and lookup geo (best-effort)
+    let extractedIp = null;
+    try {
+      const forwarded = req.headers['x-forwarded-for'] || req.headers['x-real-ip'];
+      const remote = (req.socket && req.socket.remoteAddress) || req.connection?.remoteAddress || req.ip;
+      extractedIp = forwarded ? String(forwarded).split(',')[0].trim() : (remote || '');
+      if (extractedIp && extractedIp.startsWith('::ffff:')) extractedIp = extractedIp.replace('::ffff:', '');
+      if (extractedIp === '::1') extractedIp = '127.0.0.1';
+      console.log('[updateProfile] Extracted IP:', extractedIp);
+    } catch (e) {
+      console.warn('[updateProfile] Error extracting IP:', e.message);
+      extractedIp = null;
+    }
+    let geo = null;
+    if (extractedIp) {
+      try {
+        console.log('[updateProfile] Starting geo lookup for IP:', extractedIp);
+        geo = await lookupIp(extractedIp);
+        console.log('[updateProfile] Geo lookup result:', geo);
+      } catch (e) {
+        console.error('[updateProfile] Geo lookup error:', e.message);
+        geo = null;
+      }
+    }
+
     const { name, bio, phone, location, preferred_contact, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages, setup_completed } = req.body;
 
     // Get user's role to determine which fields are allowed
@@ -365,6 +391,27 @@ export const updateProfile = async (req, res) => {
 
     if (isProfileComplete || forceSetupComplete) {
       updateSql += `, setup_completed = TRUE `;
+    }
+
+    // Append geo/ip fields if available
+    if (extractedIp) {
+      updateSql += `, ip_address = ? `;
+      params.push(extractedIp);
+      console.log('[updateProfile] Added ip_address:', extractedIp);
+    }
+    if (geo && geo.state) {
+      updateSql += `, current_state = ? `;
+      params.push(geo.state);
+      console.log('[updateProfile] Added current_state:', geo.state);
+    } else if (geo) {
+      console.warn('[updateProfile] geo.state is missing/empty:', geo.state);
+    }
+    if (geo && geo.country) {
+      updateSql += `, current_country = ? `;
+      params.push(geo.country);
+      console.log('[updateProfile] Added current_country:', geo.country);
+    } else if (geo) {
+      console.warn('[updateProfile] geo.country is missing/empty:', geo.country);
     }
 
     updateSql += `WHERE id = ?`;

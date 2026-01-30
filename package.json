@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "node src/server.js",
     "start": "node src/server.js",
+    "check:user-geo": "node src/scripts/check_user_geo.js",
     "build": "echo 'No build step required for this project'",
     "lint": "eslint src --ext .js",
     "audit": "npm audit --json",

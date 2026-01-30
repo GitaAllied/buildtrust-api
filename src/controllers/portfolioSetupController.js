@@ -3,6 +3,7 @@ import pool from '../config/database.js';
 import fs from 'fs';
 import path from 'path';
 import { sendPortfolioCreatedEmail } from '../services/email.js';
+import { lookupIp } from '../services/ipGeo.js';
 
 /**
  * Helper function to ensure upload directories exist
@@ -171,6 +172,33 @@ export const completePortfolioSetup = async (req, res) => {
       return res.status(400).json({ error: 'Missing required data (personal info or user ID)' });
     }
 
+    // Extract IP address from request (x-forwarded-for, x-real-ip, socket)
+    let extractedIp = null;
+    try {
+      const forwarded = req.headers['x-forwarded-for'] || req.headers['x-real-ip'];
+      const remote = (req.socket && req.socket.remoteAddress) || req.connection?.remoteAddress || req.ip;
+      extractedIp = forwarded ? String(forwarded).split(',')[0].trim() : (remote || '');
+      // strip IPv6 prefix if present
+      if (extractedIp && extractedIp.startsWith('::ffff:')) extractedIp = extractedIp.replace('::ffff:', '');
+      if (extractedIp === '::1') extractedIp = '127.0.0.1';
+    } catch (e) {
+      console.warn('Could not extract IP from request headers', e.message);
+      extractedIp = null;
+    }
+
+    // Lookup geolocation (state, country) for extracted IP (best-effort)
+    let geo = null;
+    if (extractedIp) {
+      try {
+        console.log('🔎 [Portfolio Setup] Starting geo lookup for IP:', extractedIp);
+        geo = await lookupIp(extractedIp);
+        console.log('🔎 [Portfolio Setup] Geo lookup result:', geo);
+      } catch (e) {
+        console.error('❌ [Portfolio Setup] Geo lookup error:', e.message);
+        geo = null;
+      }
+    }
+
     const connection = await pool.getConnection();
     
     try {
@@ -184,6 +212,29 @@ export const completePortfolioSetup = async (req, res) => {
         phone: personal.phoneNumber?.trim() || null,
         location: personal.currentLocation?.trim() || null,
       };
+
+      // Attach IP and geo info when available
+      if (extractedIp) {
+        updateUserData.ip_address = extractedIp;
+        console.log('✅ [Portfolio Setup] Setting ip_address:', extractedIp);
+      }
+      
+      if (geo) {
+        if (geo.state) {
+          updateUserData.current_state = geo.state;
+          console.log('✅ [Portfolio Setup] Setting current_state:', geo.state);
+        } else {
+          console.warn('⚠️ [Portfolio Setup] geo.state is empty/null');
+        }
+        if (geo.country) {
+          updateUserData.current_country = geo.country;
+          console.log('✅ [Portfolio Setup] Setting current_country:', geo.country);
+        } else {
+          console.warn('⚠️ [Portfolio Setup] geo.country is empty/null');
+        }
+      } else {
+        console.warn('⚠️ [Portfolio Setup] geo object is null/falsy');
+      }
 
       // Add role-specific fields
       if (personal.role === 'developer') {
