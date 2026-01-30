@@ -173,8 +173,7 @@ export const getDeveloperById = async (req, res) => {
       }
 
       const dev = developers[0];
-
-      // Get all associated data (same as above)
+      // -- Skills / Specializations
       const [skills] = await connection.query(
         `SELECT s.name FROM user_skills us
          JOIN skills s ON us.skill_id = s.id
@@ -182,41 +181,106 @@ export const getDeveloperById = async (req, res) => {
         [id]
       );
 
+      // -- Portfolio (developer's featured portfolio entry)
       const [portfolio] = await connection.query(
-        `SELECT * FROM portfolios WHERE user_id = ?`,
+        `SELECT * FROM portfolios WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
         [id]
       );
 
-      const [projects] = await connection.query(
-        `SELECT * FROM projects WHERE client_id = ? ORDER BY created_at DESC`,
+      // -- Contracts + Projects: fetch projects developer worked on (via contracts)
+      const [contracts] = await connection.query(
+        `SELECT p.id as project_id, p.title, p.description, p.location, p.budget, p.project_type, p.status as project_status, p.created_at as project_created_at, c.id as contract_id, c.status as contract_status, c.agreed_amount, c.start_date, c.end_date
+         FROM contracts c
+         JOIN projects p ON c.project_id = p.id
+         WHERE c.developer_id = ?
+         ORDER BY p.created_at DESC
+         LIMIT 50`,
         [id]
       );
 
+      // Attach media for each project
       const projectsWithMedia = await Promise.all(
-        projects.map(async (project) => {
+        contracts.map(async (row) => {
           const [media] = await connection.query(
-            `SELECT * FROM project_media WHERE project_id = ?`,
-            [project.id]
+            `SELECT id, url, filename, mime_type FROM project_media WHERE project_id = ? ORDER BY id ASC`,
+            [row.project_id]
           );
-          return { ...project, media };
+          return {
+            id: row.project_id,
+            title: row.title,
+            description: row.description,
+            project_type: row.project_type,
+            location: row.location,
+            budget: row.budget,
+            completion_year: row.end_date ? new Date(row.end_date).getFullYear() : null,
+            status: row.project_status,
+            contract_id: row.contract_id,
+            contract_status: row.contract_status,
+            media
+          };
         })
       );
 
+      // -- Documents / Licenses (user_documents)
       const [docs] = await connection.query(
-        `SELECT * FROM user_documents WHERE user_id = ? ORDER BY type`,
+        `SELECT id, type, filename, url, verified, created_at FROM user_documents WHERE user_id = ? ORDER BY type`,
         [id]
       );
 
-      res.json({
-        success: true,
-        developer: {
-          ...dev,
-          skills,
-          portfolio: portfolio.length > 0 ? portfolio[0] : null,
-          projects: projectsWithMedia,
-          documents: docs
-        }
-      });
+      // -- Reviews: public reviews about this developer (clients -> developer)
+      const [reviews] = await connection.query(
+        `SELECT r.id, r.reviewer_id, u.name as client_name, r.project_id, r.contract_id, r.rating, r.comment, r.created_at
+         FROM reviews r
+         LEFT JOIN users u ON r.reviewer_id = u.id
+         WHERE r.reviewee_id = ? AND r.review_type = 'client_to_developer' AND r.is_public = TRUE
+         ORDER BY r.created_at DESC
+         LIMIT 50`,
+        [id]
+      );
+
+      // Compute average rating and completed projects count
+      const avgRating = reviews.length > 0 ? (reviews.reduce((s, r) => s + (r.rating || 0), 0) / reviews.length) : (dev.rating || 0);
+
+      // Completed projects count: use contracts table where developer_id and contract.status = 'completed'
+      const [completedRow] = await connection.query(
+        `SELECT COUNT(*) as completed FROM contracts WHERE developer_id = ? AND status = 'completed'`,
+        [id]
+      );
+      const completedProjectsCount = (completedRow && completedRow[0] && completedRow[0].completed) || dev.completed_projects || 0;
+
+      // Build response object mapping DB columns to frontend-friendly fields
+      const responseDeveloper = {
+        id: dev.id,
+        name: dev.name,
+        contact_person: dev.name,
+        is_verified: dev.email_verified === 1 || dev.email_verified === true,
+        location: dev.location,
+        bio: dev.bio,
+        rating: Number(avgRating.toFixed(2)),
+        completed_projects: Number(completedProjectsCount),
+        years_experience: dev.years_experience,
+        trust_score: dev.trust_score || null,
+        response_time: dev.response_time || null,
+        languages: dev.languages ? (typeof dev.languages === 'string' ? JSON.parse(dev.languages || '[]') : dev.languages) : [],
+        cities_covered: dev.preferred_cities ? (typeof dev.preferred_cities === 'string' ? JSON.parse(dev.preferred_cities || '[]') : dev.preferred_cities) : [],
+        build_types: dev.project_types ? (typeof dev.project_types === 'string' ? JSON.parse(dev.project_types || '[]') : dev.project_types) : [],
+        skills: skills.map(s => s.name),
+        portfolio: portfolio.length > 0 ? portfolio[0] : null,
+        projects: projectsWithMedia,
+        documents: docs,
+        licenses: docs.filter(d => /cac|license|certificat|licen/i.test(d.type || d.filename || '')),
+        reviews: reviews.map(r => ({
+          id: r.id,
+          client_name: r.client_name,
+          project_id: r.project_id,
+          contract_id: r.contract_id,
+          rating: r.rating,
+          comment: r.comment,
+          review_date: r.created_at
+        }))
+      };
+
+      res.json({ success: true, developer: responseDeveloper });
 
     } finally {
       connection.release();

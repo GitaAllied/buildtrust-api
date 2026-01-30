@@ -418,7 +418,10 @@ export async function initializeDatabase() {
       'budget_range VARCHAR(50)',
       'working_style VARCHAR(255)',
       'availability VARCHAR(50)',
-      'specializations TEXT'  // JSON array
+      'specializations TEXT',  // JSON array
+      'ip_address VARCHAR(45)',
+      'current_state VARCHAR(255)',
+      'current_country VARCHAR(255)'
     ];
 
     for (const column of additionalUserColumns) {
