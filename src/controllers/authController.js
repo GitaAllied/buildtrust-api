@@ -295,6 +295,15 @@ export const updateProfile = async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
     const userId = decoded.userId || decoded.id; // Use actual ID from token
 
+    // Helper: detect local/private IPs
+    const isPrivateIp = (ip) => {
+      if (!ip) return true;
+      if (ip === '::1' || ip === 'localhost') return true;
+      // IPv4 private ranges
+      if (/^127\.|^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
+      return false;
+    };
+
     // Extract IP and lookup geo (best-effort)
     let extractedIp = null;
     try {
@@ -312,11 +321,40 @@ export const updateProfile = async (req, res) => {
     if (extractedIp) {
       try {
         console.log('[updateProfile] Starting geo lookup for IP:', extractedIp);
-        geo = await lookupIp(extractedIp);
-        console.log('[updateProfile] Geo lookup result:', geo);
+        if (isPrivateIp(extractedIp)) {
+          console.warn('[updateProfile] Local/private IP detected, skipping geo lookup:', extractedIp);
+        } else {
+          geo = await lookupIp(extractedIp);
+          console.log('[updateProfile] Geo lookup result:', geo);
+        }
       } catch (e) {
         console.error('[updateProfile] Geo lookup error:', e.message);
         geo = null;
+      }
+    }
+
+    // If geo not found, try stored ip_address from DB
+    if (!geo) {
+      try {
+        const [storedIpRows] = await pool.query('SELECT ip_address FROM users WHERE id = ?', [userId]);
+        const storedIp = storedIpRows && storedIpRows[0] ? storedIpRows[0].ip_address : null;
+        if (storedIp && !isPrivateIp(storedIp)) {
+          try {
+            console.log('[updateProfile] Attempting geo lookup from stored ip_address:', storedIp);
+            const storedGeo = await lookupIp(storedIp);
+            console.log('[updateProfile] Geo lookup result from stored ip:', storedGeo);
+            if (storedGeo) {
+              geo = storedGeo;
+              extractedIp = storedIp; // prefer stored ip for persistence
+            }
+          } catch (e) {
+            console.error('[updateProfile] Geo lookup from stored ip failed:', e.message);
+          }
+        } else {
+          console.log('[updateProfile] No usable stored ip_address for geo lookup');
+        }
+      } catch (e) {
+        console.error('[updateProfile] Error reading stored ip_address:', e.message);
       }
     }
 
@@ -375,22 +413,28 @@ export const updateProfile = async (req, res) => {
     // Build dynamic query based on user role
     let updateSql = `UPDATE users SET 
         name = ?, bio = ?, phone = ?, location = ?, preferred_contact = ?, 
-        company_type = ?, years_experience = ?, `;
+        company_type = ?, years_experience = ? `;
     
     const params = [name, bio, phone, location, preferred_contact, company_type, yearsExperienceValue];
 
-    // Only update developer-specific fields for developers
+    // Only update developer-specific fields for developers (prefix with comma)
     if (userRole === 'developer') {
-      updateSql += `project_types = ?, preferred_cities = ?, budget_range = ?, working_style = ?, availability = ?, specializations = ?, languages = ? `;
+      updateSql += `, project_types = ?, preferred_cities = ?, budget_range = ?, working_style = ?, availability = ?, specializations = ?, languages = ? `;
       params.push(projectTypesValue, preferredCitiesValue, budget_range, working_style, availability, specializationsValue, languagesValue);
     } else {
-      // For clients, set developer fields to defaults
-      updateSql += `project_types = '[]', preferred_cities = '[]', budget_range = NULL, working_style = NULL, availability = NULL, specializations = '[]', languages = ? `;
+      // For clients, set developer fields to defaults (prefix with comma)
+      updateSql += `, project_types = '[]', preferred_cities = '[]', budget_range = NULL, working_style = NULL, availability = NULL, specializations = '[]', languages = ? `;
       params.push(languagesValue);
     }
 
     if (isProfileComplete || forceSetupComplete) {
-      updateSql += `, setup_completed = TRUE `;
+      updateSql += `, setup_completed = ? `;
+      params.push(true);
+      // When a client completes their setup mark them as active
+      if (userRole === 'client') {
+        updateSql += `, is_active = ? `;
+        params.push(1);
+      }
     }
 
     // Append geo/ip fields if available
@@ -419,8 +463,8 @@ export const updateProfile = async (req, res) => {
 
     await pool.query(updateSql, params);
 
-    // Return updated user data
-    const [updatedUsers] = await pool.query('SELECT id, email, name, role, bio, phone, location, company_type, years_experience, project_types, preferred_cities, languages, budget_range, working_style, availability, specializations, setup_completed FROM users WHERE id = ?', [userId]);
+    // Return updated user data (include is_active)
+    const [updatedUsers] = await pool.query('SELECT id, email, name, role, bio, phone, location, company_type, years_experience, project_types, preferred_cities, languages, budget_range, working_style, availability, specializations, setup_completed, is_active FROM users WHERE id = ?', [userId]);
     const updatedUser = (Array.isArray(updatedUsers) && updatedUsers[0]) ? updatedUsers[0] : null;
 
     res.json({ message: 'Profile updated successfully', user: updatedUser });
@@ -428,6 +472,7 @@ export const updateProfile = async (req, res) => {
     if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
       return res.status(403).json({ error: 'Invalid token' });
     }
+    console.error('[updateProfile] Error:', error);
     res.status(500).json({ error: 'An error occurred while updating your profile' });
   }
 };

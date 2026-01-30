@@ -1,4 +1,5 @@
 import pool from '../config/database.js';
+import { getDeveloperLocation } from '../services/geolocation.js';
 
 /**
  * Get all developers with their portfolios and projects
@@ -8,6 +9,9 @@ export const getDevelopers = async (req, res) => {
     const connection = await pool.getConnection();
     
     try {
+      // Get client's IP address from request
+      const clientIP = req.ip || req.connection.remoteAddress || req.socket.remoteAddress || '127.0.0.1';
+      
       // Fetch all developers (users with role='developer' and setup_completed=true)
       const [developers] = await connection.query(
         `SELECT 
@@ -16,6 +20,9 @@ export const getDevelopers = async (req, res) => {
           email, 
           bio, 
           location, 
+          ip_address,
+          current_state,
+          current_country,
           years_experience,
           company_type,
           email_verified,
@@ -45,30 +52,46 @@ export const getDevelopers = async (req, res) => {
               [dev.id]
             );
 
-            // Get projects (all projects where user is owner)
-            const [projects] = await connection.query(
-              `SELECT p.id, p.title, p.description, p.type, p.location, p.budget, p.status
-               FROM projects p
-               WHERE p.user_id = ? OR p.client_id = ?
-               LIMIT 10`,
-              [dev.id, dev.id]
+            // Get projects via contracts (projects the developer worked on) with full media
+            const [contractProjects] = await connection.query(
+              `SELECT p.id as project_id, p.title, p.description, p.location, p.budget_min, p.budget_max, p.project_type, p.status as project_status, p.created_at as project_created_at, c.id as contract_id, c.status as contract_status, c.agreed_amount, c.start_date, c.end_date
+               FROM contracts c
+               JOIN projects p ON c.project_id = p.id
+               WHERE c.developer_id = ?
+               ORDER BY p.created_at DESC
+               LIMIT 20`,
+              [dev.id]
             );
 
-            // Get media for each project
+            // Attach media for each project (keep as array)
             const projectsWithMedia = await Promise.all(
-              projects.map(async (project) => {
+              contractProjects.map(async (row) => {
                 const [media] = await connection.query(
-                  `SELECT id, url, filename FROM project_media 
-                   WHERE project_id = ? 
-                   LIMIT 1`,
-                  [project.id]
+                  `SELECT id, url, filename, mime_type FROM project_media WHERE project_id = ? ORDER BY id ASC LIMIT 5`,
+                  [row.project_id]
                 );
                 return {
-                  ...project,
-                  media: media.length > 0 ? media[0] : null
+                  id: row.project_id,
+                  title: row.title,
+                  description: row.description,
+                  project_type: row.project_type,
+                  location: row.location,
+                  budget: row.budget_min || row.budget_max || null,
+                  completion_year: row.end_date ? new Date(row.end_date).getFullYear() : null,
+                  status: row.project_status,
+                  contract_id: row.contract_id,
+                  contract_status: row.contract_status,
+                  media: media || []
                 };
               })
             );
+
+            // Completed projects count for this developer
+            const [completedRow] = await connection.query(
+              `SELECT COUNT(*) as completed FROM contracts WHERE developer_id = ? AND status = 'completed'`,
+              [dev.id]
+            );
+            const completedProjectsCount = (completedRow && completedRow[0] && completedRow[0].completed) || 0;
 
             // Get user documents for verification (count only)
             const [docs] = await connection.query(
@@ -77,11 +100,15 @@ export const getDevelopers = async (req, res) => {
               [dev.id]
             );
 
+            // Get location from database or fetch from IP if null
+            const locationData = await getDeveloperLocation(dev, connection, clientIP);
+            const finalLocation = locationData.location || 'Nigeria';
+
             // Calculate transparency score based on profile completeness
             let transparencyScore = 0;
             if (dev.name) transparencyScore += 15;
             if (dev.bio) transparencyScore += 15;
-            if (dev.location) transparencyScore += 10;
+            if (finalLocation && finalLocation !== 'Nigeria') transparencyScore += 10;
             if (dev.years_experience) transparencyScore += 10;
             if (dev.company_type) transparencyScore += 10;
             if (skills.length > 0) transparencyScore += 15;
@@ -91,7 +118,9 @@ export const getDevelopers = async (req, res) => {
             return {
               id: dev.id,
               name: dev.name || 'Developer',
-              location: dev.location || 'Nigeria',
+              location: finalLocation,
+              state: locationData.state,
+              country: locationData.country,
               experience: dev.years_experience || 0,
               transparencyScore: Math.min(transparencyScore, 100),
               verified: dev.email_verified === true,
@@ -99,8 +128,9 @@ export const getDevelopers = async (req, res) => {
               projects: projectsWithMedia.map(p => ({
                 id: p.id,
                 title: p.title,
-                type: p.type,
-                image: p.media?.url || '/placeholder.svg',
+                type: p.project_type || p.type,
+                media: p.media || [],
+                image: (Array.isArray(p.media) && p.media.length > 0) ? (p.media[0].url || p.media[0]) : '/placeholder.svg',
                 description: p.description,
                 location: p.location,
                 budget: p.budget
@@ -108,16 +138,23 @@ export const getDevelopers = async (req, res) => {
               specializations: skills.map(s => s.name),
               portfolio: portfolios.length > 0 ? portfolios[0] : null,
               rating: 4.5,
-              completedProjects: 0,
+              completed_projects: completedProjectsCount,
               verified_documents: docs && docs[0] ? docs[0].count : 0
             };
           } catch (err) {
             console.error(`Error enriching developer ${dev.id}:`, err.message);
             // Return minimal developer object on error for this specific dev
+            const locationData = await getDeveloperLocation(dev, connection, clientIP).catch(() => ({
+              location: 'Nigeria',
+              state: null,
+              country: 'Nigeria'
+            }));
             return {
               id: dev.id,
               name: dev.name || 'Developer',
-              location: dev.location || 'Nigeria',
+              location: locationData.location || 'Nigeria',
+              state: locationData.state,
+              country: locationData.country,
               experience: dev.years_experience || 0,
               transparencyScore: 30,
               verified: dev.email_verified === true,
@@ -126,7 +163,7 @@ export const getDevelopers = async (req, res) => {
               specializations: [],
               portfolio: null,
               rating: 0,
-              completedProjects: 0,
+              completed_projects: 0,
               verified_documents: 0
             };
           }
@@ -162,6 +199,9 @@ export const getDeveloperById = async (req, res) => {
     const connection = await pool.getConnection();
     
     try {
+      // Get client's IP address from request
+      const clientIP = req.ip || req.connection.remoteAddress || req.socket.remoteAddress || '127.0.0.1';
+      
       // Get developer info
       const [developers] = await connection.query(
         `SELECT * FROM users WHERE id = ? AND role = 'developer'`,
@@ -238,8 +278,18 @@ export const getDeveloperById = async (req, res) => {
         [id]
       );
 
+      // Get location from database or fetch from IP if null
+      const locationData = await getDeveloperLocation(dev, connection, clientIP);
+      const finalLocation = locationData.location || 'Nigeria';
+
       // Compute average rating and completed projects count
-      const avgRating = reviews.length > 0 ? (reviews.reduce((s, r) => s + (r.rating || 0), 0) / reviews.length) : (dev.rating || 0);
+      let avgRating = 0;
+      if (Array.isArray(reviews) && reviews.length > 0) {
+        const sum = reviews.reduce((s, r) => s + (Number(r.rating) || 0), 0);
+        avgRating = sum / reviews.length;
+      } else {
+        avgRating = Number(dev.rating) || 0;
+      }
 
       // Completed projects count: use contracts table where developer_id and contract.status = 'completed'
       const [completedRow] = await connection.query(
@@ -254,7 +304,9 @@ export const getDeveloperById = async (req, res) => {
         name: dev.name,
         contact_person: dev.name,
         is_verified: dev.email_verified === 1 || dev.email_verified === true,
-        location: dev.location,
+        location: finalLocation,
+        state: locationData.state,
+        country: locationData.country,
         bio: dev.bio,
         rating: Number(avgRating.toFixed(2)),
         completed_projects: Number(completedProjectsCount),
