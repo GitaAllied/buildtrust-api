@@ -8,7 +8,7 @@ import projectsRoutes from './routes/projects.js';
 import portfolioRoutes from './routes/portfolio.js';
 import developersRoutes from './routes/developers.js';
 import { initializeDatabase } from './config/dbInit.js';
-import { runMigrations } from './config/migrations.js';
+// migrations removed: dbInit handles required schema changes
 import fs from 'fs';
 import path from 'path';
 
@@ -48,8 +48,7 @@ app.use('/uploads', express.static(uploadsDir));
 // Initialize database
 initializeDatabase().catch(console.error);
 
-// Run migrations
-runMigrations().catch(console.error);
+// Migrations disabled - `initializeDatabase` performs schema setup
 
 // Global error handlers
 process.on('uncaughtException', (err) => {

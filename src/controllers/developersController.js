@@ -1,5 +1,7 @@
 import pool from '../config/database.js';
 import { getDeveloperLocation } from '../services/geolocation.js';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * Get all developers with their portfolios and projects
@@ -46,9 +48,9 @@ export const getDevelopers = async (req, res) => {
               [dev.id]
             );
 
-            // Get portfolio
+            // Get portfolio (all entries for past projects display)
             const [portfolios] = await connection.query(
-              `SELECT title, description, technologies FROM portfolios WHERE user_id = ? LIMIT 1`,
+              `SELECT id, title, description, technologies FROM portfolios WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`,
               [dev.id]
             );
 
@@ -63,14 +65,32 @@ export const getDevelopers = async (req, res) => {
               [dev.id]
             );
 
-            // Attach media for each project (keep as array)
-            const projectsWithMedia = await Promise.all(
+            // Attach media for contract projects
+            const contractProjectsWithMedia = await Promise.all(
               contractProjects.map(async (row) => {
                 const [media] = await connection.query(
                   `SELECT id, url, filename, mime_type FROM project_media WHERE project_id = ? ORDER BY id ASC LIMIT 5`,
                   [row.project_id]
                 );
-                return {
+
+                // For each media item check file existence on disk (best-effort)
+                const mediaWithExists = (media || []).map((m) => {
+                  const url = m && m.url ? m.url : m;
+                  let exists = false;
+                  try {
+                    if (url && typeof url === 'string') {
+                      // Remove leading slash if present
+                      const rel = url.replace(/^\/+/, '');
+                      const absPath = path.join(process.cwd(), rel);
+                      exists = fs.existsSync(absPath);
+                    }
+                  } catch (e) {
+                    exists = false;
+                  }
+                  return { ...m, exists };
+                });
+
+                const projectWithMedia = {
                   id: row.project_id,
                   title: row.title,
                   description: row.description,
@@ -81,10 +101,85 @@ export const getDevelopers = async (req, res) => {
                   status: row.project_status,
                   contract_id: row.contract_id,
                   contract_status: row.contract_status,
-                  media: media || []
+                  source: 'contract',
+                  project_media: mediaWithExists,
+                  media: mediaWithExists
                 };
+                console.info(`Project ${row.project_id} media count (getDevelopers):`, (mediaWithExists || []).length);
+                return projectWithMedia;
               })
             );
+
+            // Convert portfolio projects (from setup) to same format
+            const setupProjectsWithMedia = await Promise.all(portfolios.map(async (portfolio) => {
+              // Parse images JSON from portfolio
+              let portfolioImages = [];
+              if (portfolio.images) {
+                try {
+                  const images = typeof portfolio.images === 'string' ? JSON.parse(portfolio.images) : portfolio.images;
+                  if (Array.isArray(images)) {
+                    portfolioImages = images.map(img => ({
+                      url: typeof img === 'string' ? img : img.url || img,
+                      filename: typeof img === 'object' ? img.filename : null,
+                      mime_type: typeof img === 'object' ? img.mime_type : null
+                    }));
+                  }
+                } catch (e) {
+                  console.warn(`Failed to parse portfolio ${portfolio.id} images:`, e.message);
+                }
+              }
+
+              // Also attempt to fetch any project_media rows that reference this portfolio id
+              let pmRows = [];
+              try {
+                const [pm] = await connection.query(
+                  `SELECT id, url, filename, mime_type FROM project_media WHERE project_id = ? ORDER BY id ASC LIMIT 10`,
+                  [portfolio.id]
+                );
+                pmRows = pm || [];
+              } catch (e) {
+                // ignore
+                pmRows = [];
+              }
+
+              // Normalize pmRows (check file existence)
+              const pmWithExists = (pmRows || []).map((m) => {
+                const url = m && m.url ? m.url : m;
+                let exists = false;
+                try {
+                  if (url && typeof url === 'string') {
+                    const rel = url.replace(/^\\+/, '');
+                    const absPath = path.join(process.cwd(), rel);
+                    exists = fs.existsSync(absPath);
+                  }
+                } catch (e) {
+                  exists = false;
+                }
+                return { ...m, exists };
+              });
+
+              // Merge portfolioImages (from portfolios.images JSON) with any project_media rows found
+              const mergedMedia = [...(portfolioImages || []), ...pmWithExists];
+
+              return {
+                id: `portfolio-${portfolio.id}`,
+                title: portfolio.title || 'Portfolio Project',
+                description: portfolio.description || '',
+                project_type: portfolio.technologies ? portfolio.technologies : 'Portfolio',
+                location: null,
+                budget: null,
+                completion_year: portfolio.end_date ? new Date(portfolio.end_date).getFullYear() : null,
+                status: 'completed',
+                contract_id: null,
+                contract_status: null,
+                source: 'portfolio',
+                project_media: mergedMedia,
+                media: mergedMedia
+              };
+            }));
+
+            // Merge both project sources (contracts + setup)
+            const projectsWithMedia = [...contractProjectsWithMedia, ...setupProjectsWithMedia];
 
             // Completed projects count for this developer
             const [completedRow] = await connection.query(
@@ -129,7 +224,9 @@ export const getDevelopers = async (req, res) => {
                 id: p.id,
                 title: p.title,
                 type: p.project_type || p.type,
+                source: p.source,
                 media: p.media || [],
+                project_media: p.project_media || p.media || [],
                 image: (Array.isArray(p.media) && p.media.length > 0) ? (p.media[0].url || p.media[0]) : '/placeholder.svg',
                 description: p.description,
                 location: p.location,
@@ -221,9 +318,9 @@ export const getDeveloperById = async (req, res) => {
         [id]
       );
 
-      // -- Portfolio (developer's featured portfolio entry)
-      const [portfolio] = await connection.query(
-        `SELECT * FROM portfolios WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
+      // -- Portfolio (all entries for complete portfolio display)
+      const [portfolios] = await connection.query(
+        `SELECT id, title, description, technologies FROM portfolios WHERE user_id = ? ORDER BY created_at DESC`,
         [id]
       );
 
@@ -238,14 +335,30 @@ export const getDeveloperById = async (req, res) => {
         [id]
       );
 
-      // Attach media for each project
-      const projectsWithMedia = await Promise.all(
+      // Attach media for contract projects
+      const contractProjectsWithMedia = await Promise.all(
         contracts.map(async (row) => {
           const [media] = await connection.query(
             `SELECT id, url, filename, mime_type FROM project_media WHERE project_id = ? ORDER BY id ASC`,
             [row.project_id]
           );
-          return {
+
+          const mediaWithExists = (media || []).map((m) => {
+            const url = m && m.url ? m.url : m;
+            let exists = false;
+            try {
+              if (url && typeof url === 'string') {
+                const rel = url.replace(/^\/+/, '');
+                const absPath = path.join(process.cwd(), rel);
+                exists = fs.existsSync(absPath);
+              }
+            } catch (e) {
+              exists = false;
+            }
+            return { ...m, exists };
+          });
+
+          const projectWithMedia = {
             id: row.project_id,
             title: row.title,
             description: row.description,
@@ -256,10 +369,83 @@ export const getDeveloperById = async (req, res) => {
             status: row.project_status,
             contract_id: row.contract_id,
             contract_status: row.contract_status,
-            media
+            source: 'contract',
+            project_media: mediaWithExists,
+            media: mediaWithExists
           };
+          console.info(`Project ${row.project_id} media count (getDeveloperById):`, (mediaWithExists || []).length);
+          return projectWithMedia;
         })
       );
+
+      // Convert portfolio projects to same format
+      const setupProjectsWithMedia = await Promise.all(portfolios.map(async (portfolio) => {
+        // Parse images JSON from portfolio
+        let portfolioImages = [];
+        if (portfolio.images) {
+          try {
+            const images = typeof portfolio.images === 'string' ? JSON.parse(portfolio.images) : portfolio.images;
+            if (Array.isArray(images)) {
+              portfolioImages = images.map(img => ({
+                url: typeof img === 'string' ? img : img.url || img,
+                filename: typeof img === 'object' ? img.filename : null,
+                mime_type: typeof img === 'object' ? img.mime_type : null
+              }));
+            }
+          } catch (e) {
+            console.warn(`Failed to parse portfolio ${portfolio.id} images:`, e.message);
+          }
+        }
+
+        // Also attempt to fetch any project_media rows that reference this portfolio id
+        let pmRows = [];
+        try {
+          const [pm] = await connection.query(
+            `SELECT id, url, filename, mime_type FROM project_media WHERE project_id = ? ORDER BY id ASC`,
+            [portfolio.id]
+          );
+          pmRows = pm || [];
+        } catch (e) {
+          pmRows = [];
+        }
+
+        // Normalize pmRows (check file existence)
+        const pmWithExists = (pmRows || []).map((m) => {
+          const url = m && m.url ? m.url : m;
+          let exists = false;
+          try {
+            if (url && typeof url === 'string') {
+              const rel = url.replace(/^\\+/, '');
+              const absPath = path.join(process.cwd(), rel);
+              exists = fs.existsSync(absPath);
+            }
+          } catch (e) {
+            exists = false;
+          }
+          return { ...m, exists };
+        });
+
+        const mergedMedia = [...(portfolioImages || []), ...pmWithExists];
+
+        return {
+          id: `portfolio-${portfolio.id}`,
+          title: portfolio.title || 'Portfolio Project',
+          description: portfolio.description || '',
+          project_type: portfolio.technologies ? portfolio.technologies : 'Portfolio',
+          location: null,
+          budget: null,
+          completion_year: portfolio.end_date ? new Date(portfolio.end_date).getFullYear() : null,
+          status: 'completed',
+          contract_id: null,
+          contract_status: null,
+          source: 'portfolio',
+          project_media: mergedMedia,
+          media: mergedMedia
+        };
+      }));
+
+      // Merge both sources
+      const projectsWithMedia = [...contractProjectsWithMedia, ...setupProjectsWithMedia];
 
       // -- Documents / Licenses (user_documents)
       const [docs] = await connection.query(
@@ -317,7 +503,7 @@ export const getDeveloperById = async (req, res) => {
         cities_covered: dev.preferred_cities ? (typeof dev.preferred_cities === 'string' ? JSON.parse(dev.preferred_cities || '[]') : dev.preferred_cities) : [],
         build_types: dev.project_types ? (typeof dev.project_types === 'string' ? JSON.parse(dev.project_types || '[]') : dev.project_types) : [],
         skills: skills.map(s => s.name),
-        portfolio: portfolio.length > 0 ? portfolio[0] : null,
+        portfolio: portfolios.length > 0 ? portfolios[0] : null,
         projects: projectsWithMedia,
         documents: docs,
         licenses: docs.filter(d => /cac|license|certificat|licen/i.test(d.type || d.filename || '')),

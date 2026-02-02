@@ -29,7 +29,7 @@ const sendExternalEmail = async (toEmail, subject, htmlMessage, maxRetries = 3) 
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`📧 Sending email to: ${toEmail} (Attempt ${attempt}/${maxRetries})`);
+        console.info(`📧 Sending email (attempt ${attempt}/${maxRetries})`);
         
         const emailPayload = {
           email: toEmail,
@@ -38,29 +38,28 @@ const sendExternalEmail = async (toEmail, subject, htmlMessage, maxRetries = 3) 
           from: process.env.MAIL_FROM || 'noreply@buildtrust.africa',
         };
 
-        console.log(`  ⏳ Attempting to send via Clockly API...`);
+        console.info(`  ⏳ Attempting to send via Clockly API...`);
         
         // Make request to Clockly API
         const response = await makeClocklyRequest(emailPayload);
         
-        console.log(`✅ Email sent successfully to ${toEmail}`);
-        console.log(`📧 Clockly Response:`, response);
+        console.info(`✅ Email sent successfully (external provider)`);
         return; // Success - exit function
       } catch (err) {
         lastError = err;
-        console.error(`❌ Attempt ${attempt} failed for ${toEmail}:`, err.message);
+        console.error(`❌ Email send attempt ${attempt} failed:`, err.message);
         
         if (attempt < maxRetries) {
           // Wait before retrying: 3s * attempt
           const waitTime = 3000 * attempt;
-          console.log(`⏳ Retrying in ${waitTime}ms...`);
+          console.info(`⏳ Retrying email send in ${waitTime}ms...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
     }
     
     // All retries failed
-    console.error(`❌ All ${maxRetries} attempts failed for ${toEmail}:`, lastError?.message);
+    console.error(`❌ All ${maxRetries} email attempts failed:`, lastError?.message);
   }).catch(err => {
     console.error('❌ Uncaught error in email sending:', err);
   });
@@ -73,7 +72,8 @@ const makeClocklyRequest = (emailData) => {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(emailData);
     
-    console.log(`📤 Sending payload to Clockly API:`, emailData);
+    // Avoid logging full payload containing email addresses/content
+    console.info('📤 Sending payload to Clockly API');
     
     const options = {
       hostname: 'gitaalliedtech.com',
@@ -94,7 +94,7 @@ const makeClocklyRequest = (emailData) => {
       });
 
       res.on('end', () => {
-        console.log(`📬 Clockly API response (status ${res.statusCode}):`, data);
+        console.info(`📬 Clockly API response status ${res.statusCode}`);
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve({
             statusCode: res.statusCode,
@@ -130,7 +130,7 @@ export const sendVerificationEmail = async (
   toEmail,
   verificationToken
 ) => {
-  console.log(`🔐 Starting verification email send process for: ${toEmail}`);
+  console.info(`🔐 Starting verification email send process`);
   
   const verificationUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/verify-email?token=${verificationToken}`;
   const logoUrl = getLogoBase64();
@@ -171,13 +171,13 @@ export const sendVerificationEmail = async (
 </div>
   `;
 
-  console.log(`📬 Queuing verification email for: ${toEmail}`);
+  console.info(`📬 Queuing verification email`);
   const result = await sendExternalEmail(
     toEmail,
     "Verify Your Email - BuildTrust Africa",
     message
   );
-  console.log(`✅ Verification email queued successfully for: ${toEmail}`);
+  console.info(`✅ Verification email queued successfully`);
   return result;
 };
 
@@ -247,7 +247,7 @@ export const sendPortfolioCreatedEmail = async (
   developerName,
   developerId
 ) => {
-  console.log(`🎉 Starting portfolio created email send process for: ${toEmail}`);
+  console.info(`🎉 Starting portfolio created email send process`);
   
   const portfolioUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/developer-profile/${developerId}`;
   const editPortfolioUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/developer-dashboard`;
@@ -311,12 +311,12 @@ export const sendPortfolioCreatedEmail = async (
 </div>
   `;
 
-  console.log(`📬 Queuing portfolio created email for: ${toEmail}`);
+  console.info(`📬 Queuing portfolio created email`);
   const result = await sendExternalEmail(
     toEmail,
     "🎉 Your Portfolio is Live - Start Attracting Clients! - BuildTrust Africa",
     message
   );
-  console.log(`✅ Portfolio created email queued successfully for: ${toEmail}`);
+  console.info(`✅ Portfolio created email queued successfully`);
   return result;
 };

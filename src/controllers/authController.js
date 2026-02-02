@@ -95,7 +95,7 @@ export const signup = async (req, res) => {
     );
 
     // Send verification email (fire and forget - don't await)
-    console.log(`📨 Initiating verification email send for user ${userId} (${email})`);
+    console.info(`📨 Initiating verification email send for user id ${userId}`);
     sendVerificationEmail(email, verificationToken).catch(err => {
       console.error('❌ Email sending failed (non-blocking):', err);
     });
@@ -248,13 +248,8 @@ export const getMe = async (req, res) => {
 
     const user = users[0];
 
-    console.log('📋 getMe - User from DB:', {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      hasPhone: !!user.phone,
-    });
+    // Do not log PII. Log only that getMe succeeded for a user id.
+    console.info(`📋 getMe - User fetched id=${user.id}`);
 
     res.json({
       user: {
@@ -312,7 +307,7 @@ export const updateProfile = async (req, res) => {
       extractedIp = forwarded ? String(forwarded).split(',')[0].trim() : (remote || '');
       if (extractedIp && extractedIp.startsWith('::ffff:')) extractedIp = extractedIp.replace('::ffff:', '');
       if (extractedIp === '::1') extractedIp = '127.0.0.1';
-      console.log('[updateProfile] Extracted IP:', extractedIp);
+      console.info('[updateProfile] Extracted IP: (hidden)');
     } catch (e) {
       console.warn('[updateProfile] Error extracting IP:', e.message);
       extractedIp = null;
@@ -320,12 +315,12 @@ export const updateProfile = async (req, res) => {
     let geo = null;
     if (extractedIp) {
       try {
-        console.log('[updateProfile] Starting geo lookup for IP:', extractedIp);
+        console.info('[updateProfile] Starting geo lookup');
         if (isPrivateIp(extractedIp)) {
           console.warn('[updateProfile] Local/private IP detected, skipping geo lookup:', extractedIp);
         } else {
           geo = await lookupIp(extractedIp);
-          console.log('[updateProfile] Geo lookup result:', geo);
+          console.info('[updateProfile] Geo lookup completed');
         }
       } catch (e) {
         console.error('[updateProfile] Geo lookup error:', e.message);
@@ -340,9 +335,9 @@ export const updateProfile = async (req, res) => {
         const storedIp = storedIpRows && storedIpRows[0] ? storedIpRows[0].ip_address : null;
         if (storedIp && !isPrivateIp(storedIp)) {
           try {
-            console.log('[updateProfile] Attempting geo lookup from stored ip_address:', storedIp);
+            console.info('[updateProfile] Attempting geo lookup from stored ip_address');
             const storedGeo = await lookupIp(storedIp);
-            console.log('[updateProfile] Geo lookup result from stored ip:', storedGeo);
+            console.info('[updateProfile] Geo lookup completed from stored ip');
             if (storedGeo) {
               geo = storedGeo;
               extractedIp = storedIp; // prefer stored ip for persistence
@@ -351,7 +346,7 @@ export const updateProfile = async (req, res) => {
             console.error('[updateProfile] Geo lookup from stored ip failed:', e.message);
           }
         } else {
-          console.log('[updateProfile] No usable stored ip_address for geo lookup');
+          console.info('[updateProfile] No usable stored ip_address for geo lookup');
         }
       } catch (e) {
         console.error('[updateProfile] Error reading stored ip_address:', e.message);
@@ -441,19 +436,19 @@ export const updateProfile = async (req, res) => {
     if (extractedIp) {
       updateSql += `, ip_address = ? `;
       params.push(extractedIp);
-      console.log('[updateProfile] Added ip_address:', extractedIp);
+      console.info('[updateProfile] Added ip_address (hidden)');
     }
     if (geo && geo.state) {
       updateSql += `, current_state = ? `;
       params.push(geo.state);
-      console.log('[updateProfile] Added current_state:', geo.state);
+      console.info('[updateProfile] Added current_state');
     } else if (geo) {
       console.warn('[updateProfile] geo.state is missing/empty:', geo.state);
     }
     if (geo && geo.country) {
       updateSql += `, current_country = ? `;
       params.push(geo.country);
-      console.log('[updateProfile] Added current_country:', geo.country);
+      console.info('[updateProfile] Added current_country');
     } else if (geo) {
       console.warn('[updateProfile] geo.country is missing/empty:', geo.country);
     }
@@ -575,23 +570,23 @@ export const forgotPassword = async (req, res) => {
 
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
-    console.log(`🔑 Forgot password request for: ${email}`);
+    console.info(`🔑 Forgot password requested`);
 
     // Find user
     const [users] = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
 
     if (!Array.isArray(users) || users.length === 0) {
       // Don't reveal if email exists or not for security
-      console.log(`⚠️ Email not found in system: ${email}`);
+      console.info('⚠️ Email not found in system');
       return res.json({ message: 'If an account with this email exists, a password reset link has been sent.' });
     }
 
     const user = users[0];
-    console.log(`✓ User found for email: ${email}, user_id: ${user.id}`);
+    console.info(`✓ User found for forgot-password (user_id: ${user.id})`);
 
     // Delete existing unused tokens for this user
     await pool.query('DELETE FROM password_reset_tokens WHERE user_id = ? AND used = FALSE', [user.id]);
-    console.log(`✓ Cleaned up old password reset tokens for user ${user.id}`);
+    console.info(`✓ Cleaned up old password reset tokens`);
 
     // Generate reset token
     const resetToken = generateVerificationToken();
@@ -600,14 +595,14 @@ export const forgotPassword = async (req, res) => {
 
     // Store reset token
     await pool.query('INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)', [user.id, resetToken, expiresAt]);
-    console.log(`✓ Password reset token stored for user ${user.id}`);
+    console.info(`✓ Password reset token stored`);
 
     // Send reset email (fire and forget, don't block the response)
     sendPasswordResetEmail(email, resetToken).catch(err => {
       console.error(`❌ Failed to send password reset email to ${email}:`, err);
     });
     
-    console.log(`✓ Password reset email sent to ${email}`);
+    console.info(`✓ Password reset email queued`);
 
     res.json({ message: 'If an account with this email exists, a password reset link has been sent.' });
   } catch (error) {

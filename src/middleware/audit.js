@@ -96,9 +96,15 @@ export const auditSubmission = (req, res, next) => {
   const originalJson = res.json;
   res.json = function(data) {
     try {
-      // Only capture first 1000 chars of response to avoid massive logs
+      // Capture response as JSON string. If the serialized response is large,
+      // store a valid JSON object indicating truncation so MySQL JSON column
+      // accepts the value (avoid inserting invalid JSON like a truncated string).
       const dataStr = JSON.stringify(data);
-      responseBody = dataStr.length > 1000 ? dataStr.substring(0, 1000) + '...' : dataStr;
+      if (dataStr.length > 1000) {
+        responseBody = JSON.stringify({ truncated: true, snippet: dataStr.substring(0, 1000) });
+      } else {
+        responseBody = dataStr;
+      }
     } catch (e) {
       responseBody = null;
     }

@@ -63,15 +63,8 @@ export const completePortfolioSetup = async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
     const userId = decoded.userId || decoded.id;
 
-    console.log('\n========== 🚀 PORTFOLIO SETUP STARTED ==========');
-    console.log('👤 User ID:', userId);
-    console.log('📨 Request headers:', Object.keys(req.headers));
-    console.log('📦 req.body keys:', req.body ? Object.keys(req.body) : 'EMPTY');
-    console.log('📁 req.files count:', req.files ? req.files.length : 0);
-    if (req.body) {
-      console.log('📝 req.body.personal exists:', !!req.body.personal);
-      console.log('⚙️ req.body.preferences exists:', !!req.body.preferences);
-    }
+    console.info('\n========== 🚀 PORTFOLIO SETUP STARTED ==========');
+    console.info('📨 Portfolio setup initiated');
 
     // Parse form data
     let personal = {};
@@ -87,8 +80,7 @@ export const completePortfolioSetup = async (req, res) => {
     if (req.body.personal) {
       try {
         personal = typeof req.body.personal === 'string' ? JSON.parse(req.body.personal) : req.body.personal;
-        console.log('📝 Personal data received:', Object.keys(personal));
-        console.log('   Fields:', personal);
+        console.info('📝 Personal data parsed');
       } catch (e) {
         console.error('❌ Error parsing personal data:', e.message);
       }
@@ -99,7 +91,7 @@ export const completePortfolioSetup = async (req, res) => {
     if (req.body.preferences) {
       try {
         preferences = typeof req.body.preferences === 'string' ? JSON.parse(req.body.preferences) : req.body.preferences;
-        console.log('✓ Preferences received:', JSON.stringify(preferences));
+        console.info('✓ Preferences parsed');
       } catch (e) {
         console.error('❌ Error parsing preferences:', e.message);
       }
@@ -115,23 +107,20 @@ export const completePortfolioSetup = async (req, res) => {
     }
 
     // Organize uploaded files from multer
-    console.log('📁 Total files received via multer:', req.files ? req.files.length : 0);
+    console.info('📁 Files received count:', req.files ? req.files.length : 0);
     if (req.files && Array.isArray(req.files)) {
       for (const file of req.files) {
         const fieldName = file.fieldname;
-        console.log(`  🗂️ Processing file: ${fieldName} (${file.originalname})`);
-        
+        // Queue files by type without logging original filenames
         if (fieldName.startsWith('identity_')) {
           const docType = fieldName.replace('identity_', '');
           identityFiles[docType] = file;
-          console.log(`    ✓ Identity file ${docType} queued for upload`);
         } else if (fieldName.startsWith('credential_')) {
           const parts = fieldName.replace('credential_', '').split('_');
           const credType = parts.slice(0, -1).join('_');
           const idx = parts[parts.length - 1];
           if (!credentialsFiles[credType]) credentialsFiles[credType] = {};
           credentialsFiles[credType][idx] = file;
-          console.log(`    ✓ Credential file ${credType}[${idx}] queued for upload`);
         } else if (fieldName.startsWith('project_')) {
           const parts = fieldName.replace('project_', '').split('_');
           const projIdx = parts[0];
@@ -140,7 +129,6 @@ export const completePortfolioSetup = async (req, res) => {
             if (!projectMediaFiles[projIdx]) projectMediaFiles[projIdx] = {};
             const mediaIdx = parts[parts.length - 1];
             projectMediaFiles[projIdx][mediaIdx] = file;
-            console.log(`    ✓ Project ${projIdx} media[${mediaIdx}] queued for upload`);
           }
         }
       }
@@ -159,13 +147,10 @@ export const completePortfolioSetup = async (req, res) => {
       }
     }
     
-    console.log(`✓ Parsed ${Object.keys(projectsData).length} projects from form data`);
+    console.info(`✓ Parsed ${Object.keys(projectsData).length} projects from form data`);
 
-    console.log('\n📊 VALIDATION CHECK:');
-    console.log('  personal:', personal);
-    console.log('  Object.keys(personal):', Object.keys(personal));
-    console.log('  personal is empty?:', Object.keys(personal).length === 0);
-    console.log('  userId:', userId);
+    console.info('\n📊 VALIDATION CHECK (non-PII):');
+    console.info('  personal present:', Object.keys(personal).length > 0);
     
     if (!personal || Object.keys(personal).length === 0 || !userId) {
       console.error('❌ VALIDATION FAILED - Aborting operation');
@@ -190,9 +175,9 @@ export const completePortfolioSetup = async (req, res) => {
     let geo = null;
     if (extractedIp) {
       try {
-        console.log('🔎 [Portfolio Setup] Starting geo lookup for IP:', extractedIp);
+        console.info('🔎 [Portfolio Setup] Starting geo lookup');
         geo = await lookupIp(extractedIp);
-        console.log('🔎 [Portfolio Setup] Geo lookup result:', geo);
+        console.info('🔎 [Portfolio Setup] Geo lookup completed');
       } catch (e) {
         console.error('❌ [Portfolio Setup] Geo lookup error:', e.message);
         geo = null;
@@ -216,19 +201,19 @@ export const completePortfolioSetup = async (req, res) => {
       // Attach IP and geo info when available
       if (extractedIp) {
         updateUserData.ip_address = extractedIp;
-        console.log('✅ [Portfolio Setup] Setting ip_address:', extractedIp);
+          console.info('✅ [Portfolio Setup] Setting ip_address (stored)');
       }
       
       if (geo) {
         if (geo.state) {
           updateUserData.current_state = geo.state;
-          console.log('✅ [Portfolio Setup] Setting current_state:', geo.state);
+          console.info('✅ [Portfolio Setup] Setting current_state');
         } else {
           console.warn('⚠️ [Portfolio Setup] geo.state is empty/null');
         }
         if (geo.country) {
           updateUserData.current_country = geo.country;
-          console.log('✅ [Portfolio Setup] Setting current_country:', geo.country);
+          console.info('✅ [Portfolio Setup] Setting current_country');
         } else {
           console.warn('⚠️ [Portfolio Setup] geo.country is empty/null');
         }
@@ -244,38 +229,30 @@ export const completePortfolioSetup = async (req, res) => {
         // Add preference fields from preferences object
         // Check if preferences exist first, then safely extract each field
         if (preferences) {
-          console.log('🔍 Processing preferences for developer:');
-          
+          console.info('🔍 Processing developer preferences (non-PII)');
           if (preferences.projectTypes !== undefined) {
             updateUserData.project_types = Array.isArray(preferences.projectTypes) ? JSON.stringify(preferences.projectTypes) : (preferences.projectTypes || null);
-            console.log('  ✓ project_types:', preferences.projectTypes);
           }
           if (preferences.preferredCities !== undefined) {
             updateUserData.preferred_cities = Array.isArray(preferences.preferredCities) ? JSON.stringify(preferences.preferredCities) : (preferences.preferredCities || null);
-            console.log('  ✓ preferred_cities:', preferences.preferredCities);
           }
           if (preferences.budgetRange !== undefined) {
             updateUserData.budget_range = preferences.budgetRange || null;
-            console.log('  ✓ budget_range:', preferences.budgetRange);
           }
           if (preferences.workingStyle !== undefined) {
             updateUserData.working_style = preferences.workingStyle || null;
-            console.log('  ✓ working_style:', preferences.workingStyle);
           }
           if (preferences.availability !== undefined) {
             updateUserData.availability = preferences.availability || null;
-            console.log('  ✓ availability:', preferences.availability);
           }
           if (preferences.specializations !== undefined) {
             updateUserData.specializations = Array.isArray(preferences.specializations) ? JSON.stringify(preferences.specializations) : (preferences.specializations || null);
-            console.log('  ✓ specializations:', preferences.specializations);
           }
         }
         
         // Add languages from personal data
         if (personal.languages && Array.isArray(personal.languages) && personal.languages.length > 0) {
           updateUserData.languages = JSON.stringify(personal.languages);
-          console.log('  ✓ languages:', personal.languages);
         }
       }
 
@@ -289,40 +266,23 @@ export const completePortfolioSetup = async (req, res) => {
         .filter(([_, value]) => value !== undefined)
         .map(([_, value]) => value);
 
-      console.log('📊 User data to update:', {
-        fields: Object.keys(updateUserData),
-        totalFields: Object.keys(updateUserData).length,
-        updateUserData: updateUserData
-      });
+      console.info('📊 User data to update (fields count):', Object.keys(updateUserData).length);
 
       if (updateFields) {
         const updatedFields = Object.entries(updateUserData)
           .filter(([_, value]) => value !== undefined)
           .map(([key]) => key);
-        console.log('✓ Updating users table with fields:', updatedFields);
-        console.log(`   SQL: UPDATE users SET ${updateFields}, updated_at = NOW() WHERE id = ${userId}`);
+        console.info('✓ Updating users table with fields:', updatedFields);
         
         const [result] = await connection.query(
           `UPDATE users SET ${updateFields}, updated_at = NOW() WHERE id = ?`,
           [...updateValues, userId]
         );
         
-        console.log(`✅ [DATABASE] Update result:`, {
-          affectedRows: result.affectedRows,
-          changedRows: result.changedRows,
-          warningCount: result.warningCount
-        });
+        console.info(`✅ [DATABASE] Update result: affected=${result.affectedRows} changed=${result.changedRows}`);
         
         // Log what was actually stored
-        console.log('✅ [DATABASE] User table updated with:');
-        for (const [field, value] of Object.entries(updateUserData)) {
-          if (value !== undefined) {
-            const displayValue = typeof value === 'string' && value.length > 100 
-              ? value.substring(0, 100) + '...' 
-              : value;
-            console.log(`   📍 ${field}: ${displayValue}`);
-          }
-        }
+        console.info('✅ [DATABASE] User table updated');
       } else {
         console.warn('⚠️ No fields to update in users table');
       }
@@ -345,7 +305,7 @@ export const completePortfolioSetup = async (req, res) => {
           fileUrl = saveUploadedFile(file, dir);
           filename = file.originalname || file.filename;
           fileSize = file.size || 0;
-          console.log(`✓ Identity file saved: ${filename} at ${fileUrl}`);
+          console.info('✓ Identity file saved');
           
           // Insert into user_documents table
           await connection.query(
@@ -411,7 +371,7 @@ export const completePortfolioSetup = async (req, res) => {
                 false
               ]
             );
-            console.log(`✓ Credential file saved: ${filename} at ${fileUrl}`);
+            console.info('✓ Credential file saved');
           }
         }
 
@@ -467,7 +427,7 @@ export const completePortfolioSetup = async (req, res) => {
                   [userId, skillId, 'advanced', personal.yearsExperience ? parseInt(personal.yearsExperience.split('-')[0]) : null]
                 );
               } catch (err) {
-                console.log('Skill already linked to user:', trimmedSpec);
+                console.info('Skill already linked');
               }
             }
           }
@@ -482,7 +442,7 @@ export const completePortfolioSetup = async (req, res) => {
         const project = projectsData[projIdx];
         
         if (project.title?.trim()) {
-          console.log(`Creating project: ${project.title}, media count: ${Object.keys(projectMediaFiles[projIdx] || {}).length}`);
+          console.info(`Creating project: ${project.title}`);
 
           const [insertProject] = await connection.query(
             `INSERT INTO projects (client_id, title, description, type, location, budget, status, created_at, updated_at)
@@ -504,7 +464,7 @@ export const completePortfolioSetup = async (req, res) => {
           // Step 5a: Add project media files
           if (projectMediaFiles[projIdx]) {
             const mediaIndices = Object.keys(projectMediaFiles[projIdx]).sort((a, b) => parseInt(a) - parseInt(b));
-            console.log(`Inserting ${mediaIndices.length} media files for project ${projectId}`);
+            console.info(`Inserting ${mediaIndices.length} media files for a project`);
 
             for (const mediaIdx of mediaIndices) {
               const file = projectMediaFiles[projIdx][mediaIdx];
@@ -526,7 +486,7 @@ export const completePortfolioSetup = async (req, res) => {
                     mimeType
                   ]
                 );
-                console.log(`✓ Media inserted: ${filename} at ${fileUrl}`);
+                console.info('✓ Media inserted');
               } catch (mediaErr) {
                 console.log('Error inserting project media:', mediaErr.message);
               }
@@ -606,7 +566,7 @@ export const completePortfolioSetup = async (req, res) => {
         `UPDATE users SET setup_completed = ?, trust_score = 25, is_active = 1, updated_at = NOW() WHERE id = ?`,
         [true, userId]
       );
-      console.log(`✅ [DATABASE] Setup completed, trust_score=25, and is_active=1 for user ${userId}`);
+      console.info('✅ [DATABASE] Setup completed, trust_score=25, and is_active=1');
 
       // Commit transaction
       await connection.commit();
@@ -639,16 +599,15 @@ export const completePortfolioSetup = async (req, res) => {
         }
       };
 
-      console.log('✅ [API RESPONSE] Portfolio setup complete:', {
-        userId: userId,
-        preferencesStored: responseData.preferences_saved,
-        documentsCount: responseData.summary.identity_documents,
-        projectsCount: responseData.summary.projects_created
+      console.info('✅ [API] Portfolio setup complete:', {
+        user_id: userId,
+        projects: responseData.summary.projects_created,
+        documents: responseData.summary.identity_documents
       });
 
       // Send portfolio created email asynchronously (fire and forget)
       if (userData && userData.email) {
-        console.log(`📧 Sending portfolio created email to: ${userData.email}`);
+        console.info('📧 Sending portfolio created email');
         sendPortfolioCreatedEmail(
           userData.email,
           userData.name || 'Developer',

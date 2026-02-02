@@ -9,7 +9,7 @@ export const fetchAndStoreLocationFromIP = async (userId, ipAddress) => {
   try {
     // Skip if no IP address provided
     if (!ipAddress || ipAddress === 'localhost' || ipAddress === '127.0.0.1' || ipAddress === '::1') {
-      console.log(`Skipping geolocation for localhost IP: ${ipAddress}`);
+      console.info('Skipping geolocation for localhost/private IP');
       return null;
     }
 
@@ -35,7 +35,7 @@ export const fetchAndStoreLocationFromIP = async (userId, ipAddress) => {
            WHERE id = ?`,
           [locationString, state || city || country, country, ipAddress, userId]
         );
-        console.log(`Updated location for user ${userId}: ${locationString}`);
+        console.info('Updated user location (stored)');
         return {
           location: locationString,
           state: state || city || country,
@@ -46,12 +46,12 @@ export const fetchAndStoreLocationFromIP = async (userId, ipAddress) => {
         connection.release();
       }
     } else {
-      console.warn(`Geolocation API failed for IP ${ipAddress}: ${response.data.message}`);
+      console.warn('Geolocation API failed for IP');
       return null;
     }
   } catch (error) {
     // If geolocation fails, don't throw - just log and continue
-    console.warn(`Error fetching geolocation for IP ${ipAddress}:`, error.message);
+    console.warn('Error fetching geolocation for IP:', error.message);
     return null;
   }
 };
@@ -86,7 +86,7 @@ export const getDeveloperLocation = async (developer, connection, userIpAddress)
 
         // Update user record asynchronously without blocking response
         setImmediate(async () => {
-          try {
+            try {
             const conn = await pool.getConnection();
             try {
               await conn.query(
@@ -95,7 +95,7 @@ export const getDeveloperLocation = async (developer, connection, userIpAddress)
                  WHERE id = ?`,
                 [locationString, state || city || country, country, ipToUse, developer.id]
               );
-              console.log(`Updated location for user ${developer.id}: ${locationString}`);
+              console.info('Updated user location (async store)');
             } finally {
               conn.release();
             }

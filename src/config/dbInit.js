@@ -589,16 +589,16 @@ export async function initializeDatabase() {
           ['admin@gmail.com', hashedPassword, 'Admin', 'admin']
         );
         
-        console.log('✅ Default admin user created: admin@gmail.com');
+        console.info('✅ Default admin user created');
       } else {
-        console.log('ℹ️ Default admin user already exists');
+        console.info('ℹ️ Default admin user already exists');
       }
     } catch (adminError) {
       console.error('⚠️ Error creating default admin user:', adminError.message);
       // Don't throw - let initialization continue even if admin creation fails
     }
 
-    console.log('✅ Database tables initialized successfully');
+    console.info('✅ Database tables initialized successfully');
   } catch (error) {
     console.error('❌ Error initializing database:', error);
     throw error;
