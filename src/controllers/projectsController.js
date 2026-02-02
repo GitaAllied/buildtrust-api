@@ -206,3 +206,131 @@ export const deleteProject = async (req, res) => {
     res.status(500).json({ error: 'An error occurred while deleting the project' });
   }
 };
+
+/**
+ * POST /api/projects/request
+ * Handle project request from client to developer
+ * Creates project, contract, and associated records
+ */
+export const submitProjectRequest = async (req, res) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  try {
+    // Extract authenticated user info
+    let clientId = null;
+    let userRole = null;
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
+        clientId = decoded.userId || decoded.id;
+        userRole = decoded.role || 'client';
+      } catch (tokenErr) {
+        // Token invalid or expired
+        console.warn('Invalid token in project request:', tokenErr.message);
+      }
+    }
+
+    const {
+      developerId,
+      projectName,
+      location,
+      buildingType,
+      budgetRange,
+      startDate,
+      duration,
+      message,
+      sitePlan
+    } = req.body;
+
+    // Validate required fields
+    if (!developerId || !projectName || !location || !buildingType || !budgetRange || !message) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: developerId, projectName, location, buildingType, budgetRange, message'
+      });
+    }
+
+    if (!clientId) {
+      // User not logged in - still allow to create request but mark as anonymous
+      return res.status(401).json({
+        success: false,
+        error: 'Please log in to submit a project request',
+        requireLogin: true
+      });
+    }
+
+    const connection = await pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      // Step 1: Create project record
+      const [projectResult] = await connection.query(
+        `INSERT INTO projects (
+          client_id, title, description, location, building_type, budget_range,
+          start_date, duration, message, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [
+          clientId,
+          projectName,
+          message,
+          location,
+          buildingType,
+          budgetRange,
+          startDate || null,
+          duration || null,
+          message,
+          'open'
+        ]
+      );
+
+      const projectId = projectResult.insertId;
+
+      // Step 2: Create contract record linking client and developer to the project
+      const [contractResult] = await connection.query(
+        `INSERT INTO contracts (
+          developer_id, project_id, status, created_at, updated_at
+        ) VALUES (?, ?, ?, NOW(), NOW())`,
+        [developerId, projectId, 'active']
+      );
+
+      const contractId = contractResult.insertId;
+
+      // Step 3: If sitePlan file provided, create project_media record
+      if (sitePlan && sitePlan.url) {
+        await connection.query(
+          `INSERT INTO project_media (
+            project_id, type, url, filename, mime_type, created_at
+          ) VALUES (?, ?, ?, ?, ?, NOW())`,
+          [projectId, 'site_plan', sitePlan.url, sitePlan.filename || 'site_plan', sitePlan.mimeType || 'application/pdf']
+        );
+      }
+
+      await connection.commit();
+
+      console.info(`✅ Project request created: projectId=${projectId}, contractId=${contractId}, developerId=${developerId}`);
+
+      res.json({
+        success: true,
+        message: 'Project request submitted successfully',
+        projectId,
+        contractId,
+        userRole,
+        isDeveloper: userRole === 'developer'
+      });
+
+    } finally {
+      connection.release();
+    }
+
+  } catch (error) {
+    console.error('Error submitting project request:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to submit project request',
+      details: error.message
+    });
+  }
+};

@@ -378,6 +378,27 @@ export async function initializeDatabase() {
       }
     }
 
+    // Add message column for storing client messages from project requests
+    try {
+      await pool.query(`ALTER TABLE projects ADD COLUMN message TEXT`);
+    } catch (error) {
+      if (!(error.message.includes('Duplicate column name'))) {
+        throw error;
+      }
+    }
+
+    // Add client request metadata columns
+    try {
+      await pool.query(`ALTER TABLE projects ADD COLUMN building_type VARCHAR(100)`);
+      await pool.query(`ALTER TABLE projects ADD COLUMN budget_range VARCHAR(50)`);
+      await pool.query(`ALTER TABLE projects ADD COLUMN start_date DATE`);
+      await pool.query(`ALTER TABLE projects ADD COLUMN duration VARCHAR(50)`);
+    } catch (error) {
+      if (!(error.message.includes('Duplicate column name'))) {
+        throw error;
+      }
+    }
+
     // Create project_media table for portfolio project media (images, videos)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS project_media (

@@ -4,7 +4,8 @@ import {
   uploadProjectMedia, 
   getProjects, 
   updateProject, 
-  deleteProject 
+  deleteProject,
+  submitProjectRequest
 } from '../controllers/projectsController.js';
 import multer from 'multer';
 import path from 'path';
@@ -42,6 +43,7 @@ const upload = multer({
 
 // Routes
 router.post('/', createProject);
+router.post('/request/submit', submitProjectRequest);
 router.get('/', getProjects);
 router.put('/:projectId', updateProject);
 router.delete('/:projectId', deleteProject);
