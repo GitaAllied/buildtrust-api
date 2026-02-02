@@ -53,10 +53,18 @@ export const getDevelopers = async (req, res) => {
               `SELECT id, title, description, technologies FROM portfolios WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`,
               [dev.id]
             );
-
+            // Get all projects created by developer (from projects table)
+            const [developerProjects] = await connection.query(
+              `SELECT id as project_id, title, description, location, budget, project_type, status as project_status, estimated_hours, created_at as project_created_at
+               FROM projects
+               WHERE client_id = ?
+               ORDER BY created_at DESC
+               LIMIT 100`,
+              [dev.id]
+            );
             // Get projects via contracts (projects the developer worked on) with full media
             const [contractProjects] = await connection.query(
-              `SELECT p.id as project_id, p.title, p.description, p.location, p.budget, p.project_type, p.status as project_status, p.estimated_hours, p.created_at as project_created_at, c.id as contract_id, c.status as contract_status, c.agreed_amount, c.start_date, c.end_date
+              `SELECT p.id as project_id, p.title, p.description, p.location, p.budget_min, p.budget_max, p.project_type, p.status as project_status, p.created_at as project_created_at, c.id as contract_id, c.status as contract_status, c.agreed_amount, c.start_date, c.end_date
                FROM contracts c
                JOIN projects p ON c.project_id = p.id
                WHERE c.developer_id = ?
@@ -96,10 +104,9 @@ export const getDevelopers = async (req, res) => {
                   description: row.description,
                   project_type: row.project_type,
                   location: row.location,
-                  budget: row.budget,
+                  budget: row.budget_min || row.budget_max || null,
                   completion_year: row.end_date ? new Date(row.end_date).getFullYear() : null,
                   status: row.project_status,
-                  estimated_hours: row.estimated_hours,
                   contract_id: row.contract_id,
                   contract_status: row.contract_status,
                   source: 'contract',
@@ -111,45 +118,19 @@ export const getDevelopers = async (req, res) => {
               })
             );
 
-            // Convert portfolio projects (from setup) to same format
-            const setupProjectsWithMedia = await Promise.all(portfolios.map(async (portfolio) => {
-              // Parse images JSON from portfolio
-              let portfolioImages = [];
-              if (portfolio.images) {
-                try {
-                  const images = typeof portfolio.images === 'string' ? JSON.parse(portfolio.images) : portfolio.images;
-                  if (Array.isArray(images)) {
-                    portfolioImages = images.map(img => ({
-                      url: typeof img === 'string' ? img : img.url || img,
-                      filename: typeof img === 'object' ? img.filename : null,
-                      mime_type: typeof img === 'object' ? img.mime_type : null
-                    }));
-                  }
-                } catch (e) {
-                  console.warn(`Failed to parse portfolio ${portfolio.id} images:`, e.message);
-                }
-              }
+            // Convert developer projects to same format with media
+            const setupProjectsWithMedia = await Promise.all(developerProjects.map(async (row) => {
+              const [media] = await connection.query(
+                `SELECT id, url, filename, mime_type FROM project_media WHERE project_id = ? ORDER BY id ASC LIMIT 5`,
+                [row.project_id]
+              );
 
-              // Also attempt to fetch any project_media rows that reference this portfolio id
-              let pmRows = [];
-              try {
-                const [pm] = await connection.query(
-                  `SELECT id, url, filename, mime_type FROM project_media WHERE project_id = ? ORDER BY id ASC LIMIT 10`,
-                  [portfolio.id]
-                );
-                pmRows = pm || [];
-              } catch (e) {
-                // ignore
-                pmRows = [];
-              }
-
-              // Normalize pmRows (check file existence)
-              const pmWithExists = (pmRows || []).map((m) => {
+              const mediaWithExists = (media || []).map((m) => {
                 const url = m && m.url ? m.url : m;
                 let exists = false;
                 try {
                   if (url && typeof url === 'string') {
-                    const rel = url.replace(/^\\+/, '');
+                    const rel = url.replace(/^\/+/, '');
                     const absPath = path.join(process.cwd(), rel);
                     exists = fs.existsSync(absPath);
                   }
@@ -159,40 +140,21 @@ export const getDevelopers = async (req, res) => {
                 return { ...m, exists };
               });
 
-              // Merge portfolioImages (from portfolios.images JSON) with any project_media rows found
-              const mergedMedia = [...(portfolioImages || []), ...pmWithExists];
-
-              // Get location from any project in projects table (if exists)
-              let portfolioLocation = 'location not specified';
-              let portfolioBudget = null;
-              try {
-                const [projects] = await connection.query(
-                  `SELECT p.location, p.budget FROM projects p 
-                   WHERE p.location IS NOT NULL AND p.location != ''
-                   LIMIT 1`
-                );
-                if (projects && projects.length > 0) {
-                  portfolioLocation = projects[0].location;
-                  portfolioBudget = projects[0].budget;
-                }
-              } catch (e) {
-                console.warn(`Failed to fetch location for portfolio ${portfolio.id}:`, e.message);
-              }
-
               return {
-                id: `portfolio-${portfolio.id}`,
-                title: portfolio.title || 'Portfolio Project',
-                description: portfolio.description || '',
-                project_type: portfolio.technologies ? portfolio.technologies : 'Portfolio',
-                location: portfolioLocation,
-                budget: portfolioBudget,
-                completion_year: portfolio.end_date ? new Date(portfolio.end_date).getFullYear() : null,
-                status: 'completed',
+                id: row.project_id,
+                title: row.title,
+                description: row.description,
+                project_type: row.project_type,
+                location: row.location,
+                budget: row.budget,
+                completion_year: row.project_created_at ? new Date(row.project_created_at).getFullYear() : null,
+                status: row.project_status,
+                estimated_hours: row.estimated_hours,
                 contract_id: null,
                 contract_status: null,
                 source: 'portfolio',
-                project_media: mergedMedia,
-                media: mergedMedia
+                project_media: mediaWithExists,
+                media: mediaWithExists
               };
             }));
 
@@ -248,11 +210,7 @@ export const getDevelopers = async (req, res) => {
                 image: (Array.isArray(p.media) && p.media.length > 0) ? (p.media[0].url || p.media[0]) : '/placeholder.svg',
                 description: p.description,
                 location: p.location,
-                budget: p.budget,
-                status: p.status,
-                contract_id: p.contract_id,
-                estimated_hours: p.estimated_hours,
-                completion_year: p.completion_year
+                budget: p.budget
               })),
               specializations: skills.map(s => s.name),
               portfolio: portfolios.length > 0 ? portfolios[0] : null,
@@ -345,10 +303,18 @@ export const getDeveloperById = async (req, res) => {
         `SELECT id, title, description, technologies FROM portfolios WHERE user_id = ? ORDER BY created_at DESC`,
         [id]
       );
-
+      // -- All projects created by developer (from projects table)
+      const [developerProjects] = await connection.query(
+        `SELECT id as project_id, title, description, location, budget, project_type, status as project_status, estimated_hours, created_at as project_created_at
+         FROM projects
+         WHERE client_id = ?
+         ORDER BY created_at DESC
+         LIMIT 100`,
+        [id]
+      );
       // -- Contracts + Projects: fetch projects developer worked on (via contracts)
       const [contracts] = await connection.query(
-        `SELECT p.id as project_id, p.title, p.description, p.location, p.budget, p.project_type, p.status as project_status, p.estimated_hours, p.created_at as project_created_at, c.id as contract_id, c.status as contract_status, c.agreed_amount, c.start_date, c.end_date
+        `SELECT p.id as project_id, p.title, p.description, p.location, p.budget, p.project_type, p.status as project_status, p.created_at as project_created_at, c.id as contract_id, c.status as contract_status, c.agreed_amount, c.start_date, c.end_date
          FROM contracts c
          JOIN projects p ON c.project_id = p.id
          WHERE c.developer_id = ?
@@ -389,7 +355,6 @@ export const getDeveloperById = async (req, res) => {
             budget: row.budget,
             completion_year: row.end_date ? new Date(row.end_date).getFullYear() : null,
             status: row.project_status,
-            estimated_hours: row.estimated_hours,
             contract_id: row.contract_id,
             contract_status: row.contract_status,
             source: 'contract',
@@ -401,44 +366,19 @@ export const getDeveloperById = async (req, res) => {
         })
       );
 
-      // Convert portfolio projects to same format
-      const setupProjectsWithMedia = await Promise.all(portfolios.map(async (portfolio) => {
-        // Parse images JSON from portfolio
-        let portfolioImages = [];
-        if (portfolio.images) {
-          try {
-            const images = typeof portfolio.images === 'string' ? JSON.parse(portfolio.images) : portfolio.images;
-            if (Array.isArray(images)) {
-              portfolioImages = images.map(img => ({
-                url: typeof img === 'string' ? img : img.url || img,
-                filename: typeof img === 'object' ? img.filename : null,
-                mime_type: typeof img === 'object' ? img.mime_type : null
-              }));
-            }
-          } catch (e) {
-            console.warn(`Failed to parse portfolio ${portfolio.id} images:`, e.message);
-          }
-        }
+      // Convert developer projects to same format with media
+      const setupProjectsWithMedia = await Promise.all(developerProjects.map(async (row) => {
+        const [media] = await connection.query(
+          `SELECT id, url, filename, mime_type FROM project_media WHERE project_id = ? ORDER BY id ASC`,
+          [row.project_id]
+        );
 
-        // Also attempt to fetch any project_media rows that reference this portfolio id
-        let pmRows = [];
-        try {
-          const [pm] = await connection.query(
-            `SELECT id, url, filename, mime_type FROM project_media WHERE project_id = ? ORDER BY id ASC`,
-            [portfolio.id]
-          );
-          pmRows = pm || [];
-        } catch (e) {
-          pmRows = [];
-        }
-
-        // Normalize pmRows (check file existence)
-        const pmWithExists = (pmRows || []).map((m) => {
+        const mediaWithExists = (media || []).map((m) => {
           const url = m && m.url ? m.url : m;
           let exists = false;
           try {
             if (url && typeof url === 'string') {
-              const rel = url.replace(/^\\+/, '');
+              const rel = url.replace(/^\/+/, '');
               const absPath = path.join(process.cwd(), rel);
               exists = fs.existsSync(absPath);
             }
@@ -448,39 +388,21 @@ export const getDeveloperById = async (req, res) => {
           return { ...m, exists };
         });
 
-        const mergedMedia = [...(portfolioImages || []), ...pmWithExists];
-
-        // Get location from any project in projects table (if exists)
-        let portfolioLocation = 'location not specified';
-        let portfolioBudget = null;
-        try {
-          const [projects] = await connection.query(
-            `SELECT p.location, p.budget FROM projects p 
-             WHERE p.location IS NOT NULL AND p.location != ''
-             LIMIT 1`
-          );
-          if (projects && projects.length > 0) {
-            portfolioLocation = projects[0].location;
-            portfolioBudget = projects[0].budget;
-          }
-        } catch (e) {
-          console.warn(`Failed to fetch location for portfolio ${portfolio.id}:`, e.message);
-        }
-
         return {
-          id: `portfolio-${portfolio.id}`,
-          title: portfolio.title || 'Portfolio Project',
-          description: portfolio.description || '',
-          project_type: portfolio.technologies ? portfolio.technologies : 'Portfolio',
-          location: portfolioLocation,
-          budget: portfolioBudget,
-          completion_year: portfolio.end_date ? new Date(portfolio.end_date).getFullYear() : null,
-          status: 'completed',
+          id: row.project_id,
+          title: row.title,
+          description: row.description,
+          project_type: row.project_type,
+          location: row.location,
+          budget: row.budget,
+          completion_year: row.project_created_at ? new Date(row.project_created_at).getFullYear() : null,
+          status: row.project_status,
+          estimated_hours: row.estimated_hours,
           contract_id: null,
           contract_status: null,
           source: 'portfolio',
-          project_media: mergedMedia,
-          media: mergedMedia
+          project_media: mediaWithExists,
+          media: mediaWithExists
         };
       }));
 
