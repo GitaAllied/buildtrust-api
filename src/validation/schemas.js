@@ -7,7 +7,8 @@ export const updateProfileSchema = z.object({
   location: z.string().optional(),
   preferred_contact: z.string().optional(),
   company_type: z.string().optional(),
-  years_experience: z.union([z.string().regex(/^\d+$/).transform(Number), z.number()]).optional(),
+  // Accept either a number or a descriptive string (e.g. "1-3", "8-15", "15+")
+  years_experience: z.union([z.string(), z.number()]).optional(),
   project_types: z.union([z.array(z.string()), z.string()]).optional(),
   preferred_cities: z.union([z.array(z.string()), z.string()]).optional(),
   budget_range: z.string().optional(),

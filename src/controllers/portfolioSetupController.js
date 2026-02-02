@@ -224,7 +224,9 @@ export const completePortfolioSetup = async (req, res) => {
       // Add role-specific fields
       if (personal.role === 'developer') {
         updateUserData.company_type = personal.companyType || null;
-        updateUserData.years_experience = personal.yearsExperience ? parseInt(personal.yearsExperience.split('-')[0]) : null;
+        // Store the exact yearsExperience string selected by the user (e.g. "1-3", "15+")
+        // Previously we parsed the first number which truncated ranges like "15+" to "1".
+        updateUserData.years_experience = personal.yearsExperience ? String(personal.yearsExperience) : null;
         
         // Add preference fields from preferences object
         // Check if preferences exist first, then safely extract each field
