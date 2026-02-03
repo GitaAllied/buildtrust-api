@@ -24,21 +24,21 @@ export const createProject = async (req, res) => {
       });
     }
 
-    // Insert project into database
-
+    // Insert project into database with both client_id and developer_id
     const [insertResult] = await pool.query(
       `INSERT INTO projects (client_id, developer_id, title, type, location, budget, description, status, created_at, updated_at) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [projectClientId, developer_id || null, title, type || '', location || '', budget || '', description, 'active']
     );
+
     const projectId = insertResult.insertId;
 
     // Fetch the created project
-
     const [projects] = await pool.query(
       'SELECT id, client_id, developer_id, title, type, location, budget, description, status, created_at, updated_at FROM projects WHERE id = ?',
       [projectId]
     );
+
     const project = Array.isArray(projects) && projects[0] ? projects[0] : null;
 
     res.json({ 
@@ -110,11 +110,11 @@ export const getProjects = async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
     const userId = decoded.userId || decoded.id;
 
-
     const [projects] = await pool.query(
       'SELECT id, client_id, developer_id, title, type, location, budget, description, status, created_at, updated_at FROM projects WHERE client_id = ?',
       [userId]
     );
+
     // Enrich projects with developer info, media, and milestone progress
     const enrichedProjects = await Promise.all(
       (Array.isArray(projects) ? projects : []).map(async (project) => {
@@ -155,7 +155,7 @@ export const getProjects = async (req, res) => {
         return {
           ...project,
           developer_name: contract.developer_name || 'Assigned Developer',
-          developer_id: contract.developer_id,
+          developer_id: project.developer_id || contract.developer_id,
           contract_id: contract.id,
           progress,
           media: media?.[0] || null,
@@ -184,7 +184,7 @@ export const updateProject = async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
     const userId = decoded.userId || decoded.id;
     const { projectId } = req.params;
-    const { title, type, location, budget, description, status } = req.body;
+    const { title, type, location, budget, description, status, developer_id } = req.body;
 
     // Verify project belongs to user
     const [projects] = await pool.query(
@@ -198,13 +198,13 @@ export const updateProject = async (req, res) => {
 
     // Update project
     await pool.query(
-      `UPDATE projects SET title = ?, type = ?, location = ?, budget = ?, description = ?, status = ?, updated_at = NOW() 
+      `UPDATE projects SET title = ?, type = ?, location = ?, budget = ?, description = ?, status = ?, developer_id = ?, updated_at = NOW() 
        WHERE id = ?`,
-      [title || '', type || '', location || '', budget || '', description || '', status || 'active', projectId]
+      [title || '', type || '', location || '', budget || '', description || '', status || 'active', developer_id || null, projectId]
     );
 
     const [updatedProjects] = await pool.query(
-      'SELECT id, client_id, title, type, location, budget, description, status, created_at, updated_at FROM projects WHERE id = ?',
+      'SELECT id, client_id, developer_id, title, type, location, budget, description, status, created_at, updated_at FROM projects WHERE id = ?',
       [projectId]
     );
 
@@ -244,10 +244,7 @@ export const deleteProject = async (req, res) => {
     }
 
     // Delete project
-    await pool.query(
-      'DELETE FROM projects WHERE id = ?',
-      [projectId]
-    );
+    await pool.query('DELETE FROM projects WHERE id = ?', [projectId]);
 
     res.json({ message: 'Project deleted successfully' });
   } catch (error) {
@@ -261,7 +258,7 @@ export const deleteProject = async (req, res) => {
 /**
  * POST /api/projects/request
  * Handle project request from client to developer
- * Creates project, contract, and associated records
+ * Creates project with both client_id and developer_id
  */
 export const submitProjectRequest = async (req, res) => {
   const authHeader = req.headers['authorization'];
@@ -317,10 +314,9 @@ export const submitProjectRequest = async (req, res) => {
     try {
       await connection.beginTransaction();
 
-      // Step 1: Create project record
+      // Step 1: Create project record with both client_id and developer_id
       // NOTE: We store the client's freeform request only in the `message` column.
       // Do NOT duplicate the client's `message` into the `description` column.
-
       const [projectResult] = await connection.query(
         `INSERT INTO projects (
           client_id, developer_id, title, description, location, building_type, budget_range,
@@ -340,6 +336,7 @@ export const submitProjectRequest = async (req, res) => {
           'open'
         ]
       );
+
       const projectId = projectResult.insertId;
 
       // Step 2: Create contract record linking client and developer to the project
@@ -364,7 +361,7 @@ export const submitProjectRequest = async (req, res) => {
 
       await connection.commit();
 
-      console.info(`✅ Project request created: projectId=${projectId}, contractId=${contractId}, developerId=${developerId}`);
+      console.info(`✅ Project request created: projectId=${projectId}, contractId=${contractId}, clientId=${clientId}, developerId=${developerId}`);
 
       res.json({
         success: true,

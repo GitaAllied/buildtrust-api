@@ -447,10 +447,11 @@ export const completePortfolioSetup = async (req, res) => {
           console.info(`Creating project: ${project.title}`);
 
           const [insertProject] = await connection.query(
-            `INSERT INTO projects (client_id, title, description, type, location, budget, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+            `INSERT INTO projects (client_id, developer_id, title, description, type, location, budget, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
             [
               userId,
+              null,
               project.title?.trim() || null,
               project.description?.trim() || null,
               project.type || null,
