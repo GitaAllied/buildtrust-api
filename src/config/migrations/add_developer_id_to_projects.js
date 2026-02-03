@@ -48,6 +48,15 @@ export const addDeveloperIdToProjects = async () => {
     } catch (err) {
       console.log('ℹ️  Could not alter description column or already nullable:', err.message);
     }
+
+    // Ensure contracts.agreed_amount is nullable so inserts without agreed_amount succeed
+    try {
+      console.log('🛠️  Ensuring contracts.agreed_amount is nullable...');
+      await pool.query(`ALTER TABLE contracts MODIFY COLUMN agreed_amount DECIMAL(10,2) NULL DEFAULT NULL`);
+      console.log('✅ contracts.agreed_amount set to NULLABLE');
+    } catch (err) {
+      console.log('ℹ️  Could not alter contracts.agreed_amount or already nullable:', err.message);
+    }
   } catch (error) {
     console.error('Error adding developer_id column:', error.message);
   }

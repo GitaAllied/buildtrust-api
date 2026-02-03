@@ -345,9 +345,9 @@ export const submitProjectRequest = async (req, res) => {
       // Step 2: Create contract record linking client and developer to the project
       const [contractResult] = await connection.query(
         `INSERT INTO contracts (
-          developer_id, project_id, status, created_at, updated_at
-        ) VALUES (?, ?, ?, NOW(), NOW())`,
-        [developerId, projectId, 'active']
+          developer_id, project_id, agreed_amount, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, NOW(), NOW())`,
+        [developerId, projectId, null, 'active']
       );
 
       const contractId = contractResult.insertId;

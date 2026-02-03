@@ -699,6 +699,14 @@ async function runSchemaMigrations() {
       console.log('ℹ️ description column modify skipped or already nullable:', descError.message);
     }
 
+    // Ensure contracts.agreed_amount is nullable (safe to run multiple times)
+    try {
+      await pool.query(`ALTER TABLE contracts MODIFY COLUMN agreed_amount DECIMAL(10,2) NULL DEFAULT NULL`);
+      console.log('✓ contracts.agreed_amount set to nullable');
+    } catch (amtErr) {
+      console.log('ℹ️ contracts.agreed_amount modify skipped or already nullable:', amtErr.message);
+    }
+
     console.log('✅ Schema migrations completed successfully');
   } catch (error) {
     console.error('❌ Migration error:', error.message);
