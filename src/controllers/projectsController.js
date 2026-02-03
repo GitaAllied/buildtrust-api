@@ -112,7 +112,7 @@ export const getProjects = async (req, res) => {
 
 
     const [projects] = await pool.query(
-      'SELECT id, client_id, developer_id, title, type, location, budget, description, status, created_at, updated_at FROM projects WHERE client_id = ?',
+      'SELECT id, client_id, developer_id, title, type, location, budget, budget_range, description, status, created_at, updated_at FROM projects WHERE client_id = ?',
       [userId]
     );
     // Enrich projects with developer info, media, and milestone progress
@@ -204,7 +204,7 @@ export const updateProject = async (req, res) => {
     );
 
     const [updatedProjects] = await pool.query(
-      'SELECT id, client_id, title, type, location, budget, description, status, created_at, updated_at FROM projects WHERE id = ?',
+      'SELECT id, client_id, title, type, location, budget, budget_range, description, status, created_at, updated_at FROM projects WHERE id = ?',
       [projectId]
     );
 
