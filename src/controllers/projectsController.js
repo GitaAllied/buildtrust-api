@@ -155,7 +155,7 @@ export const getProjects = async (req, res) => {
         return {
           ...project,
           developer_name: contract.developer_name || 'Assigned Developer',
-          developer_id: contract.developer_id,
+          developer_id: project.developer_id || contract.developer_id,
           contract_id: contract.id,
           progress,
           media: media?.[0] || null,
@@ -184,7 +184,7 @@ export const updateProject = async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
     const userId = decoded.userId || decoded.id;
     const { projectId } = req.params;
-    const { title, type, location, budget, description, status } = req.body;
+    const { title, type, location, budget, description, status, developer_id } = req.body;
 
     // Verify project belongs to user
     const [projects] = await pool.query(
@@ -198,9 +198,9 @@ export const updateProject = async (req, res) => {
 
     // Update project
     await pool.query(
-      `UPDATE projects SET title = ?, type = ?, location = ?, budget = ?, description = ?, status = ?, updated_at = NOW() 
+      `UPDATE projects SET title = ?, type = ?, location = ?, budget = ?, description = ?, status = ?, developer_id = ?, updated_at = NOW() 
        WHERE id = ?`,
-      [title || '', type || '', location || '', budget || '', description || '', status || 'active', projectId]
+      [title || '', type || '', location || '', budget || '', description || '', status || 'active', developer_id || null, projectId]
     );
 
     const [updatedProjects] = await pool.query(
