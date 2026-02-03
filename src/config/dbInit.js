@@ -645,60 +645,58 @@ async function runSchemaMigrations() {
        WHERE TABLE_NAME = 'projects' AND COLUMN_NAME = 'developer_id'`
     );
 
-    if (columns && columns.length > 0) {
+    const developerIdExists = columns && columns.length > 0;
+
+    if (!developerIdExists) {
+      console.log('🔄 Running migration: add developer_id to projects table...');
+
+      // Add developer_id column
+      await pool.query(
+        `ALTER TABLE projects ADD COLUMN developer_id INT NULL AFTER client_id`
+      );
+      console.log('✓ Added developer_id column');
+
+      // Add foreign key constraint
+      try {
+        await pool.query(
+          `ALTER TABLE projects ADD CONSTRAINT fk_projects_developer_id 
+           FOREIGN KEY (developer_id) REFERENCES users(id) ON DELETE SET NULL`
+        );
+        console.log('✓ Added foreign key constraint');
+      } catch (fkError) {
+        if (fkError.message.includes('already exists')) {
+          console.log('✓ Foreign key already exists');
+        } else {
+          throw fkError;
+        }
+      }
+
+      // Add index on developer_id
+      try {
+        await pool.query(
+          `ALTER TABLE projects ADD INDEX idx_developer_id (developer_id)`
+        );
+        console.log('✓ Added index on developer_id');
+      } catch (indexError) {
+        if (indexError.message.includes('already exists')) {
+          console.log('✓ Index already exists');
+        } else {
+          throw indexError;
+        }
+      }
+    } else {
       console.log('✓ developer_id column already exists');
-      return;
     }
 
-    console.log('🔄 Running migration: add developer_id to projects table...');
-
-    // Add developer_id column
-    await pool.query(
-      `ALTER TABLE projects ADD COLUMN developer_id INT NULL AFTER client_id`
-    );
-    console.log('✓ Added developer_id column');
-
-    // Add foreign key constraint
-    try {
-      await pool.query(
-        `ALTER TABLE projects ADD CONSTRAINT fk_projects_developer_id 
-         FOREIGN KEY (developer_id) REFERENCES users(id) ON DELETE SET NULL`
-      );
-      console.log('✓ Added foreign key constraint');
-    } catch (fkError) {
-      if (fkError.message.includes('already exists')) {
-        console.log('✓ Foreign key already exists');
-      } else {
-        throw fkError;
-      }
-    }
-
-    // Add index on developer_id
-    try {
-      await pool.query(
-        `ALTER TABLE projects ADD INDEX idx_developer_id (developer_id)`
-      );
-      console.log('✓ Added index on developer_id');
-    } catch (indexError) {
-      if (indexError.message.includes('already exists')) {
-        console.log('✓ Index already exists');
-      } else {
-        throw indexError;
-      }
-    }
-
-    // Ensure description column is nullable
+    // Ensure description column is nullable (always attempt)
     try {
       await pool.query(
         `ALTER TABLE projects MODIFY COLUMN description TEXT NULL`
       );
       console.log('✓ description column set to nullable');
     } catch (descError) {
-      if (descError.message.includes('already exists') || descError.message.includes('Syntax')) {
-        console.log('✓ description column already nullable');
-      } else {
-        throw descError;
-      }
+      // Some MySQL versions return different messages; log and continue
+      console.log('ℹ️ description column modify skipped or already nullable:', descError.message);
     }
 
     console.log('✅ Schema migrations completed successfully');
