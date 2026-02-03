@@ -622,9 +622,88 @@ export async function initializeDatabase() {
       // Don't throw - let initialization continue even if admin creation fails
     }
 
+    // Run schema migrations (idempotent - safe to run multiple times)
+    try {
+      await runSchemaMigrations();
+    } catch (migrationError) {
+      console.error('⚠️ Error running migrations:', migrationError.message);
+      // Don't throw - let initialization continue even if migrations fail
+    }
+
     console.info('✅ Database tables initialized successfully');
   } catch (error) {
     console.error('❌ Error initializing database:', error);
+    throw error;
+  }
+}
+
+async function runSchemaMigrations() {
+  try {
+    // Check if developer_id column exists
+    const [columns] = await pool.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_NAME = 'projects' AND COLUMN_NAME = 'developer_id'`
+    );
+
+    if (columns && columns.length > 0) {
+      console.log('✓ developer_id column already exists');
+      return;
+    }
+
+    console.log('🔄 Running migration: add developer_id to projects table...');
+
+    // Add developer_id column
+    await pool.query(
+      `ALTER TABLE projects ADD COLUMN developer_id INT NULL AFTER client_id`
+    );
+    console.log('✓ Added developer_id column');
+
+    // Add foreign key constraint
+    try {
+      await pool.query(
+        `ALTER TABLE projects ADD CONSTRAINT fk_projects_developer_id 
+         FOREIGN KEY (developer_id) REFERENCES users(id) ON DELETE SET NULL`
+      );
+      console.log('✓ Added foreign key constraint');
+    } catch (fkError) {
+      if (fkError.message.includes('already exists')) {
+        console.log('✓ Foreign key already exists');
+      } else {
+        throw fkError;
+      }
+    }
+
+    // Add index on developer_id
+    try {
+      await pool.query(
+        `ALTER TABLE projects ADD INDEX idx_developer_id (developer_id)`
+      );
+      console.log('✓ Added index on developer_id');
+    } catch (indexError) {
+      if (indexError.message.includes('already exists')) {
+        console.log('✓ Index already exists');
+      } else {
+        throw indexError;
+      }
+    }
+
+    // Ensure description column is nullable
+    try {
+      await pool.query(
+        `ALTER TABLE projects MODIFY COLUMN description TEXT NULL`
+      );
+      console.log('✓ description column set to nullable');
+    } catch (descError) {
+      if (descError.message.includes('already exists') || descError.message.includes('Syntax')) {
+        console.log('✓ description column already nullable');
+      } else {
+        throw descError;
+      }
+    }
+
+    console.log('✅ Schema migrations completed successfully');
+  } catch (error) {
+    console.error('❌ Migration error:', error.message);
     throw error;
   }
 }
