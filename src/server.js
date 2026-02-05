@@ -7,6 +7,7 @@ import userDocumentsRoutes from './routes/userDocuments.js';
 import projectsRoutes from './routes/projects.js';
 import portfolioRoutes from './routes/portfolio.js';
 import developersRoutes from './routes/developers.js';
+import messagesRoutes from './routes/messages.js';
 import usersRoutes from './routes/users.js';
 import { initializeDatabase } from './config/dbInit.js';
 // migrations removed: dbInit handles required schema changes
@@ -72,6 +73,7 @@ app.use('/api/users', userDocumentsRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/developers', developersRoutes);
+app.use('/api/messages', messagesRoutes);
 
 import multer from 'multer';
 
