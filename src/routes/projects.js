@@ -2,10 +2,14 @@ import express from 'express';
 import { 
   createProject, 
   uploadProjectMedia, 
-  getProjects, 
+  getProjects,
+  getAllProjects,
   updateProject, 
   deleteProject,
-  submitProjectRequest
+  submitProjectRequest,
+  assignDeveloperToProject,
+  adminUpdateProject,
+  adminDeleteProject
 } from '../controllers/projectsController.js';
 import multer from 'multer';
 import path from 'path';
@@ -42,11 +46,17 @@ const upload = multer({
 });
 
 // Routes
+router.get('/admin/all', getAllProjects);
 router.post('/', createProject);
 router.post('/request/submit', submitProjectRequest);
 router.get('/', getProjects);
 router.put('/:projectId', updateProject);
 router.delete('/:projectId', deleteProject);
 router.post('/:projectId/media', upload.single('file'), uploadProjectMedia);
+
+// Admin routes
+router.post('/admin/:projectId/assign-developer', assignDeveloperToProject);
+router.put('/admin/:projectId/status', adminUpdateProject);
+router.delete('/admin/:projectId', adminDeleteProject);
 
 export default router;

@@ -100,6 +100,17 @@ export const uploadProjectMedia = async (req, res) => {
   }
 };
 
+export const getAllProjects = async (req, res) => {
+  try {
+    const [projects] = await pool.query(
+      'SELECT id, client_id, developer_id, title, type, location, budget, budget_range, description, status, created_at, updated_at FROM projects'
+    );
+    res.json(Array.isArray(projects) ? projects : []);
+  } catch (error) {
+    res.status(500).json({ error: 'An error occurred while fetching projects' });
+  }
+};
+
 export const getProjects = async (req, res) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -386,5 +397,90 @@ export const submitProjectRequest = async (req, res) => {
       error: 'Failed to submit project request',
       details: error.message
     });
+  }
+};
+// Admin endpoint to assign developer to project
+export const assignDeveloperToProject = async (req, res) => {
+  const { projectId } = req.params;
+  const { developer_id } = req.body;
+
+  try {
+    if (!developer_id) {
+      return res.status(400).json({ error: 'Developer ID is required' });
+    }
+
+    // Update project with developer_id
+    await pool.query(
+      'UPDATE projects SET developer_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [developer_id, 'in_progress', projectId]
+    );
+
+    // Create or update contract
+    const [existingContract] = await pool.query(
+      'SELECT id FROM contracts WHERE project_id = ?',
+      [projectId]
+    );
+
+    if (existingContract.length === 0) {
+      await pool.query(
+        'INSERT INTO contracts (project_id, developer_id, agreed_amount, status) VALUES (?, ?, ?, ?)',
+        [projectId, developer_id, 0, 'active']
+      );
+    } else {
+      await pool.query(
+        'UPDATE contracts SET developer_id = ? WHERE project_id = ?',
+        [developer_id, projectId]
+      );
+    }
+
+    res.json({ message: 'Developer assigned to project successfully' });
+  } catch (error) {
+    console.error('Error assigning developer:', error);
+    res.status(500).json({ error: 'An error occurred while assigning developer' });
+  }
+};
+
+// Admin endpoint to update project status
+export const adminUpdateProject = async (req, res) => {
+  const { projectId } = req.params;
+  const { status } = req.body;
+
+  try {
+    if (!status) {
+      return res.status(400).json({ error: 'Status is required' });
+    }
+
+    const validStatuses = ['open', 'in_progress', 'completed', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    await pool.query(
+      'UPDATE projects SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [status, projectId]
+    );
+
+    const [project] = await pool.query(
+      'SELECT id, client_id, developer_id, title, status FROM projects WHERE id = ?',
+      [projectId]
+    );
+
+    res.json({ message: 'Project updated successfully', project: project[0] });
+  } catch (error) {
+    console.error('Error updating project:', error);
+    res.status(500).json({ error: 'An error occurred while updating project' });
+  }
+};
+
+// Admin endpoint to delete project
+export const adminDeleteProject = async (req, res) => {
+  const { projectId } = req.params;
+
+  try {
+    await pool.query('DELETE FROM projects WHERE id = ?', [projectId]);
+    res.json({ message: 'Project deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting project:', error);
+    res.status(500).json({ error: 'An error occurred while deleting project' });
   }
 };

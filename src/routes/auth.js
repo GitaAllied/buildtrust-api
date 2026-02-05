@@ -8,6 +8,7 @@ const router = express.Router();
 // Auth routes mapped to controller methods
 router.post('/signup', authController.signup);
 router.post('/login', authController.login);
+router.post('/create-sub-admin', authController.createSubAdmin);
 router.get('/me', authController.getMe);
 // Validate profile updates
 router.put('/me', validate(updateProfileSchema), authController.updateProfile);

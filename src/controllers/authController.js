@@ -689,6 +689,65 @@ export const changePassword = async (req, res) => {
   }
 };
 
+export const createSubAdmin = async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    // Validate required fields
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and password are required' });
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
+
+    // Password validation
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long' });
+    }
+
+    // Check if user already exists
+    const [existingUsers] = await pool.query(
+      'SELECT id FROM users WHERE email = ?',
+      [email]
+    );
+
+    if (Array.isArray(existingUsers) && existingUsers.length > 0) {
+      return res.status(400).json({ error: 'An account with this email already exists' });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create sub-admin user (pre-verified)
+    const [result] = await pool.query(
+      'INSERT INTO users (email, password, name, role, email_verified, is_active, setup_completed) VALUES (?, ?, ?, ?, TRUE, TRUE, TRUE)',
+      [email, hashedPassword, name, 'admin']
+    );
+
+    const userId = result.insertId;
+
+    res.status(201).json({
+      message: 'Sub-admin created successfully',
+      user: {
+        id: userId,
+        email,
+        name,
+        role: 'admin',
+        email_verified: true,
+        is_active: true,
+        setup_completed: true,
+      },
+    });
+  } catch (error) {
+    console.error('Error creating sub-admin:', error);
+    res.status(500).json({ error: 'An error occurred while creating the sub-admin account' });
+  }
+};
+
 export default {
   signup,
   login,
@@ -700,4 +759,5 @@ export default {
   forgotPassword,
   resetPassword,
   changePassword,
+  createSubAdmin,
 };
