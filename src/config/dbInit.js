@@ -622,6 +622,82 @@ export async function initializeDatabase() {
       // Don't throw - let initialization continue even if admin creation fails
     }
 
+    // Create support_categories table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS support_categories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) UNIQUE NOT NULL,
+        description TEXT,
+        color VARCHAR(7) DEFAULT '#3B82F6',
+        is_active BOOLEAN DEFAULT TRUE,
+        ticket_count INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_name (name),
+        INDEX idx_is_active (is_active)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Create support_tickets table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        subject VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        category_id INT NOT NULL,
+        status ENUM('open', 'in_progress', 'resolved', 'closed') DEFAULT 'open',
+        priority ENUM('low', 'medium', 'high', 'urgent') DEFAULT 'medium',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMP NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (category_id) REFERENCES support_categories(id) ON DELETE CASCADE,
+        INDEX idx_user_id (user_id),
+        INDEX idx_category_id (category_id),
+        INDEX idx_status (status),
+        INDEX idx_priority (priority),
+        INDEX idx_created_at (created_at),
+        FULLTEXT idx_subject_description (subject, description)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Create support_messages table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS support_messages (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        ticket_id INT NOT NULL,
+        sender_id INT NOT NULL,
+        content TEXT NOT NULL,
+        attachments JSON,
+        is_internal BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE,
+        FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_ticket_id (ticket_id),
+        INDEX idx_sender_id (sender_id),
+        INDEX idx_created_at (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Create support_settings table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS support_settings (
+        id INT PRIMARY KEY DEFAULT 1,
+        general_settings LONGTEXT NULL,
+        ticket_settings LONGTEXT NULL,
+        sla_settings LONGTEXT NULL,
+        notification_settings LONGTEXT NULL,
+        security_settings LONGTEXT NULL,
+        advanced_settings LONGTEXT NULL,
+        updated_by INT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
+        INDEX idx_updated_at (updated_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     // Run schema migrations (idempotent - safe to run multiple times)
     try {
       await runSchemaMigrations();
@@ -706,6 +782,24 @@ async function runSchemaMigrations() {
     } catch (amtErr) {
       console.log('ℹ️ contracts.agreed_amount modify skipped or already nullable:', amtErr.message);
     }
+
+    // Create settings table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS settings (
+        id INT PRIMARY KEY DEFAULT 1,
+        general_settings LONGTEXT NULL,
+        security_settings LONGTEXT NULL,
+        email_settings LONGTEXT NULL,
+        payment_settings LONGTEXT NULL,
+        notification_settings LONGTEXT NULL,
+        updated_by INT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
+        INDEX idx_updated_at (updated_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log('✓ settings table created/verified');
 
     console.log('✅ Schema migrations completed successfully');
   } catch (error) {

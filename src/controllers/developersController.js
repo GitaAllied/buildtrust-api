@@ -496,4 +496,137 @@ export const getDeveloperById = async (req, res) => {
   }
 };
 
-export default { getDevelopers, getDeveloperById };
+/**
+ * Save a developer for the logged-in client
+ */
+export const saveDeveloper = async (req, res) => {
+  try {
+    const { developer_id } = req.body;
+    const client_id = req.user.userId || req.user.id;
+
+    if (!developer_id) {
+      return res.status(400).json({ error: 'Developer ID is required' });
+    }
+
+    if (!client_id) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    // Verify the developer exists
+    const [developer] = await pool.query(
+      'SELECT id FROM users WHERE id = ? AND role = "developer"',
+      [developer_id]
+    );
+
+    if (!developer || developer.length === 0) {
+      return res.status(404).json({ error: 'Developer not found' });
+    }
+
+    // Check if already saved
+    const [existing] = await pool.query(
+      'SELECT id FROM saved_developers WHERE client_id = ? AND developer_id = ?',
+      [client_id, developer_id]
+    );
+
+    if (existing && existing.length > 0) {
+      return res.status(400).json({ error: 'Developer already saved' });
+    }
+
+    // Save the developer
+    await pool.query(
+      'INSERT INTO saved_developers (client_id, developer_id) VALUES (?, ?)',
+      [client_id, developer_id]
+    );
+
+    res.json({ message: 'Developer saved successfully' });
+  } catch (error) {
+    console.error('Error saving developer:', error);
+    res.status(500).json({ error: 'Failed to save developer', details: error.message });
+  }
+};
+
+/**
+ * Unsave a developer for the logged-in client
+ */
+export const unsaveDeveloper = async (req, res) => {
+  try {
+    const { developer_id } = req.body;
+    const client_id = req.user.userId || req.user.id;
+
+    if (!developer_id) {
+      return res.status(400).json({ error: 'Developer ID is required' });
+    }
+
+    if (!client_id) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    // Delete the saved developer record
+    const result = await pool.query(
+      'DELETE FROM saved_developers WHERE client_id = ? AND developer_id = ?',
+      [client_id, developer_id]
+    );
+
+    if (result[0].affectedRows === 0) {
+      return res.status(404).json({ error: 'Saved developer not found' });
+    }
+
+    res.json({ message: 'Developer removed from saved list' });
+  } catch (error) {
+    console.error('Error unsaving developer:', error);
+    res.status(500).json({ error: 'Failed to unsave developer', details: error.message });
+  }
+};
+
+/**
+ * Check if a developer is saved by the logged-in client
+ */
+export const checkIfDeveloperSaved = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client_id = req.user.userId || req.user.id;
+
+    if (!client_id) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const [saved] = await pool.query(
+      'SELECT id FROM saved_developers WHERE client_id = ? AND developer_id = ?',
+      [client_id, id]
+    );
+
+    res.json({ is_saved: saved && saved.length > 0 });
+  } catch (error) {
+    console.error('Error checking if developer is saved:', error);
+    res.status(500).json({ error: 'Failed to check save status', details: error.message });
+  }
+};
+
+/**
+ * Get all saved developers for the logged-in client
+ */
+export const getSavedDevelopers = async (req, res) => {
+  try {
+    const client_id = req.user.userId || req.user.id;
+
+    if (!client_id) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const [saved] = await pool.query(
+      `SELECT sd.developer_id, u.name, u.email, u.location, u.bio, u.years_experience, u.rating, u.completed_projects, u.trust_score
+       FROM saved_developers sd
+       JOIN users u ON sd.developer_id = u.id
+       WHERE sd.client_id = ?
+       ORDER BY sd.created_at DESC`,
+      [client_id]
+    );
+
+    res.json(saved || []);
+  } catch (error) {
+    console.error('Error fetching saved developers:', error);
+    res.status(500).json({ error: 'Failed to fetch saved developers', details: error.message });
+  }
+};
+
+export default { getDevelopers, getDeveloperById, saveDeveloper, unsaveDeveloper, checkIfDeveloperSaved, getSavedDevelopers };
