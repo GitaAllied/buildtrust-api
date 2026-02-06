@@ -148,6 +148,40 @@ export const postMessage = async (req, res) => {
         );
         convId = ins.insertId;
       }
+    } else {
+      // If conversationId is provided, validate that it exists
+      const [convExists] = await pool.query(
+        `SELECT id FROM conversations WHERE id = ? LIMIT 1`,
+        [convId]
+      );
+      
+      if (!Array.isArray(convExists) || convExists.length === 0) {
+        // Conversation doesn't exist, check if we have recipientId to create it
+        if (recipientId) {
+          // Verify recipient exists and is allowed
+          const [recipientRows] = await pool.query('SELECT id, role FROM users WHERE id = ?', [recipientId]);
+          if (!Array.isArray(recipientRows) || recipientRows.length === 0) {
+            return res.status(404).json({ error: 'Recipient not found' });
+          }
+          const recipient = recipientRows[0];
+
+          // Admins may message only 'client' or 'developer' accounts
+          if (req.user && req.user.role === 'admin') {
+            if (!['client', 'developer'].includes(recipient.role)) {
+              return res.status(403).json({ error: 'Admins may only message clients or developers' });
+            }
+          }
+
+          // Create the conversation
+          const [ins] = await pool.query(
+            `INSERT INTO conversations (participant1_id, participant2_id, last_message_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+            [senderId, recipientId]
+          );
+          convId = ins.insertId;
+        } else {
+          return res.status(404).json({ error: 'Conversation not found' });
+        }
+      }
     }
 
     const [insertMsg] = await pool.query(
