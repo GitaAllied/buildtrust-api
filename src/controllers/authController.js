@@ -149,9 +149,15 @@ export const login = async (req, res) => {
     const validatedData = loginSchema.parse(req.body);
     const { email, password } = validatedData;
 
+    // Extract client IP address (consider proxy headers)
+    const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || 
+                     req.connection.remoteAddress || 
+                     req.socket.remoteAddress || 
+                     'unknown';
+
     // Find user
     const [users] = await pool.query(
-      'SELECT id, email, password, name, role, email_verified, setup_completed, is_active FROM users WHERE email = ?',
+      'SELECT id, email, password, name, role, email_verified, setup_completed, is_active, profile_image, ip_address, current_state, current_country FROM users WHERE email = ?',
       [email]
     );
 
@@ -196,6 +202,43 @@ export const login = async (req, res) => {
 
     await pool.query('INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, ?)', [user.id, token, expiresAt]);
 
+    // Update last_login timestamp and IP/location if changed
+    try {
+      const storedIp = user.ip_address;
+      
+      // If IP is different from stored IP, lookup geolocation and update
+      if (clientIp !== storedIp) {
+        console.log(`📍 IP changed for user id=${user.id}: ${storedIp} -> ${clientIp}`);
+        
+        const geoData = await lookupIp(clientIp);
+        
+        if (geoData && (geoData.state || geoData.country)) {
+          console.log(`🌍 Geolocation found for ${clientIp}:`, geoData);
+          const updateResult = await pool.query(
+            'UPDATE users SET last_login = CURRENT_TIMESTAMP, ip_address = ?, current_state = ?, current_country = ? WHERE id = ?',
+            [clientIp, geoData.state || null, geoData.country || null, user.id]
+          );
+          console.log(`✅ IP and location updated for user id=${user.id}`);
+        } else {
+          // Only update IP and last_login if geolocation lookup failed
+          const updateResult = await pool.query(
+            'UPDATE users SET last_login = CURRENT_TIMESTAMP, ip_address = ? WHERE id = ?',
+            [clientIp, user.id]
+          );
+          console.log(`✅ IP updated (no geo data) for user id=${user.id}`);
+        }
+      } else {
+        // Same IP, just update last_login
+        const updateResult = await pool.query(
+          'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?',
+          [user.id]
+        );
+        console.log(`✅ last_login updated for user id=${user.id}`);
+      }
+    } catch (updateError) {
+      console.error(`❌ Error updating user location/login for user id=${user.id}:`, updateError);
+    }
+
     res.json({
       message: 'Signed in successfully',
       token,
@@ -207,6 +250,7 @@ export const login = async (req, res) => {
         email_verified: Boolean(user.email_verified || false),
         setup_completed: Boolean(user.setup_completed || false),
         is_active: Number(user.is_active || 0),
+        profile_image: user.profile_image || null,
       },
     });
   } catch (error) {
@@ -236,9 +280,9 @@ export const getMe = async (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired session' });
     }
 
-    // Get user data - fetch ALL user fields including is_active
+    // Get user data - fetch ALL user fields including is_active and profile_image
     const [users] = await pool.query(
-      'SELECT id, email, name, role, phone, bio, location, created_at, email_verified, setup_completed, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages, is_active FROM users WHERE id = ?',
+      'SELECT id, email, name, role, phone, bio, location, created_at, email_verified, setup_completed, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages, is_active, profile_image FROM users WHERE id = ?',
       [decoded.userId]
     );
 
@@ -273,6 +317,7 @@ export const getMe = async (req, res) => {
         availability: user.availability || '',
         specializations: user.specializations ? JSON.parse(user.specializations) : [],
         languages: user.languages ? JSON.parse(user.languages) : [],
+        profile_image: user.profile_image || null,
       }
     });
   } catch (error) {

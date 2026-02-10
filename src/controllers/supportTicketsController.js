@@ -1,12 +1,17 @@
 import pool from '../config/database.js';
 
-// Get all support tickets with filters
+// Get all support tickets with filters - filtered by current user
 export async function getTickets(req, res) {
   try {
     const { category, status, priority, search, page = 1, limit = 10 } = req.query;
+    const userId = req.user?.id;
 
-    let query = 'SELECT st.*, sc.name as category_name, u.name as user_name, u.email FROM support_tickets st LEFT JOIN support_categories sc ON st.category_id = sc.id LEFT JOIN users u ON st.user_id = u.id WHERE 1=1';
-    const params = [];
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    let query = 'SELECT st.*, sc.name as category_name, u.name as user_name, u.email FROM support_tickets st LEFT JOIN support_categories sc ON st.category_id = sc.id LEFT JOIN users u ON st.user_id = u.id WHERE st.user_id = ?';
+    const params = [userId];
 
     if (category) {
       query += ' AND sc.id = ?';
@@ -36,8 +41,8 @@ export async function getTickets(req, res) {
     const [tickets] = await pool.query(query, params);
 
     // Get total count
-    let countQuery = 'SELECT COUNT(*) as total FROM support_tickets st LEFT JOIN support_categories sc ON st.category_id = sc.id WHERE 1=1';
-    const countParams = [];
+    let countQuery = 'SELECT COUNT(*) as total FROM support_tickets st LEFT JOIN support_categories sc ON st.category_id = sc.id WHERE st.user_id = ?';
+    const countParams = [userId];
 
     if (category) {
       countQuery += ' AND sc.id = ?';

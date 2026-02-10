@@ -12,6 +12,7 @@ import usersRoutes from './routes/users.js';
 import reportsRoutes from './routes/reports.js';
 import settingsRoutes from './routes/settings.js';
 import supportRoutes from './routes/support.js';
+import paymentsRoutes from './routes/payments.js';
 import { initializeDatabase } from './config/dbInit.js';
 // migrations removed: dbInit handles required schema changes
 import fs from 'fs';
@@ -80,6 +81,7 @@ app.use('/api/messages', messagesRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/support', supportRoutes);
+app.use('/api/payments', paymentsRoutes);
 
 import multer from 'multer';
 

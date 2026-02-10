@@ -161,7 +161,11 @@ export const sendVerificationEmail = async (
         <div style="background: white; border-left: 4px solid #226F75; padding: 15px; margin: 20px 0; border-radius: 4px;">
             <strong style="color: #226F75;">Alternative Method:</strong>
             <p style="margin: 10px 0 0 0; font-size: 13px;">If the button doesn't work, you can manually enter this verification token on our verification page:</p>
-            <div style="background: #f0f0f0; padding: 10px; border-radius: 4px; font-family: monospace; word-break: break-all; margin-top: 8px; font-size: 13px;">${verificationToken}</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top: 8px;">
+              <div style="background: #f0f0f0; padding: 10px; border-radius: 4px; font-family: monospace; word-break: break-all; font-size: 13px;">${verificationToken}</div>
+              <a href="${verificationUrl}&copy=1" style="display:inline-block; background: #226F75; color: white; padding: 10px 12px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 13px;">Copy Token</a>
+              <div style="width:100%; font-size:12px; color:#666; margin-top:6px;">If the button opens this page in your browser, you can copy the token there.</div>
+            </div>
         </div>
     </div>
     <div style="background: white; padding: 30px 20px; text-align: center; border-radius: 0 0 8px 8px; border-top: 1px solid #e0e0e0; font-size: 13px; color: #888;">

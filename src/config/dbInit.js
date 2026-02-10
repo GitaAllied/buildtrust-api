@@ -262,6 +262,26 @@ export async function initializeDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
+    // Create payment_methods table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS payment_methods (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        cardholder_name VARCHAR(255),
+        card_brand VARCHAR(100),
+        last4 VARCHAR(4),
+        exp_month TINYINT,
+        exp_year SMALLINT,
+        is_default TINYINT DEFAULT 0,
+        token VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_user_id (user_id),
+        INDEX idx_is_default (is_default)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     // Create reviews table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS reviews (
