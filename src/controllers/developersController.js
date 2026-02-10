@@ -614,7 +614,7 @@ export const getSavedDevelopers = async (req, res) => {
     }
 
     const [saved] = await pool.query(
-      `SELECT sd.developer_id, u.name, u.email, u.location, u.bio, u.years_experience, u.rating, u.completed_projects, u.trust_score
+      `SELECT sd.developer_id as id, u.name, u.email, u.location, u.bio, u.years_experience, u.rating, u.completed_projects, u.trust_score, u.is_verified, u.profile_image
        FROM saved_developers sd
        JOIN users u ON sd.developer_id = u.id
        WHERE sd.client_id = ?
