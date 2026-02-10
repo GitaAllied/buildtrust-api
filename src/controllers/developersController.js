@@ -503,19 +503,12 @@ export const saveDeveloper = async (req, res) => {
   try {
     const { developer_id } = req.body;
     const client_id = req.user.userId || req.user.id;
-    
-    console.log('💾 saveDeveloper - req.user:', req.user);
-    console.log('💾 saveDeveloper - client_id:', client_id);
-    console.log('💾 saveDeveloper - developer_id:', developer_id);
-    console.log('💾 saveDeveloper - req.body:', req.body);
 
     if (!developer_id) {
-      console.log('❌ Developer ID is required');
       return res.status(400).json({ error: 'Developer ID is required' });
     }
 
     if (!client_id) {
-      console.log('❌ User not authenticated');
       return res.status(401).json({ error: 'User not authenticated' });
     }
 
@@ -525,10 +518,7 @@ export const saveDeveloper = async (req, res) => {
       [developer_id]
     );
 
-    console.log('🔍 Developer lookup result:', developer);
-
     if (!developer || developer.length === 0) {
-      console.log('❌ Developer not found or not a developer role');
       return res.status(404).json({ error: 'Developer not found' });
     }
 
@@ -538,23 +528,19 @@ export const saveDeveloper = async (req, res) => {
       [client_id, developer_id]
     );
 
-    console.log('🔍 Existing check:', existing);
-
     if (existing && existing.length > 0) {
-      console.log('⚠️ Developer already saved');
       return res.status(400).json({ error: 'Developer already saved' });
     }
 
     // Save the developer
-    const insertResult = await pool.query(
+    await pool.query(
       'INSERT INTO saved_developers (client_id, developer_id) VALUES (?, ?)',
       [client_id, developer_id]
     );
 
-    console.log('✅ Developer saved successfully:', insertResult);
-    res.json({ message: 'Developer saved successfully', data: { client_id, developer_id } });
+    res.json({ message: 'Developer saved successfully' });
   } catch (error) {
-    console.error('❌ Error saving developer:', error);
+    console.error('Error saving developer:', error);
     res.status(500).json({ error: 'Failed to save developer', details: error.message });
   }
 };
@@ -622,16 +608,13 @@ export const checkIfDeveloperSaved = async (req, res) => {
 export const getSavedDevelopers = async (req, res) => {
   try {
     const client_id = req.user.userId || req.user.id;
-    console.log('🔍 getSavedDevelopers - req.user:', req.user);
-    console.log('🔍 getSavedDevelopers - client_id:', client_id);
 
     if (!client_id) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
 
-    console.log('🔍 Fetching saved developers for client:', client_id);
     const [saved] = await pool.query(
-      `SELECT sd.id, sd.developer_id as id, u.name, u.email, u.location, u.bio, u.is_verified, u.profile_image
+      `SELECT sd.developer_id as id, u.name, u.email, u.location, u.bio, u.profile_image
        FROM saved_developers sd
        JOIN users u ON sd.developer_id = u.id
        WHERE sd.client_id = ?
@@ -639,17 +622,9 @@ export const getSavedDevelopers = async (req, res) => {
       [client_id]
     );
 
-    console.log('✅ Saved developers retrieved:', saved);
-    
-    // Ensure we return an array with just the id field mapped correctly
-    const result = (saved || []).map(dev => ({
-      ...dev,
-      id: dev.developer_id || dev.id
-    }));
-    
-    res.json(result);
+    res.json(saved || []);
   } catch (error) {
-    console.error('❌ Error fetching saved developers:', error);
+    console.error('Error fetching saved developers:', error);
     res.status(500).json({ error: 'Failed to fetch saved developers', details: error.message });
   }
 };
