@@ -101,8 +101,8 @@ export const listDocuments = async (req, res) => {
 
     const [rows] = await pool.query('SELECT id, type, filename, url, size, metadata, verified, decline_reason, created_at FROM user_documents WHERE user_id = ?', [userId]);
 
-    // Parse metadata JSON
-    const docs = rows.map(r => ({ ...r, metadata: r.metadata ? JSON.parse(r.metadata) : null }));
+    // Parse metadata JSON safely (it may already be an object depending on driver/config)
+    const docs = rows.map(r => ({ ...r, metadata: r.metadata ? (typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata) : null }));
 
     res.json({ documents: docs });
   } catch (error) {
@@ -158,7 +158,7 @@ export const listAllDocuments = async (req, res) => {
       JOIN users u ON u.id = d.user_id
       ORDER BY d.created_at DESC`);
 
-    const docs = rows.map(r => ({ ...r, metadata: r.metadata ? JSON.parse(r.metadata) : null }));
+    const docs = rows.map(r => ({ ...r, metadata: r.metadata ? (typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata) : null }));
     res.json({ documents: docs });
   } catch (error) {
     console.error('List all documents error:', error);
@@ -184,7 +184,7 @@ export const verifyDocument = async (req, res) => {
     if (!Array.isArray(rows) || rows.length === 0) return res.status(404).json({ error: 'Document not found' });
 
     const row = rows[0];
-    row.metadata = row.metadata ? JSON.parse(row.metadata) : null;
+    row.metadata = row.metadata ? (typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata) : null;
 
     res.json({ document: row });
   } catch (error) {
