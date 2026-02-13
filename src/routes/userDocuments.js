@@ -101,4 +101,76 @@ router.post('/:id/documents/:docId/approve', authenticateToken, approveDocument)
 // POST /api/users/:id/documents/:docId/decline - decline document with reason (admin only)
 router.post('/:id/documents/:docId/decline', authenticateToken, declineDocument);
 
+// TEMP TEST ENDPOINT - upload file directly to Cloudinary for testing (admin only)
+router.post('/admin/test-cloudinary-upload', authenticateToken, upload.single('file'), async (req, res) => {
+  try {
+    // Check if user is admin
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'File is required' });
+
+    console.log('🧪 TEST CLOUDINARY UPLOAD:', {
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      destination: file.destination,
+    });
+
+    // Check if Cloudinary is configured
+    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+      return res.status(400).json({
+        error: 'Cloudinary not configured',
+        configured: false,
+        hasCloudName: !!process.env.CLOUDINARY_CLOUD_NAME,
+        hasApiKey: !!process.env.CLOUDINARY_API_KEY,
+        hasApiSecret: !!process.env.CLOUDINARY_API_SECRET,
+      });
+    }
+
+    // Upload to Cloudinary
+    const cloudinaryModule = (await import('cloudinary')).default;
+    const cloudinary = cloudinaryModule.v2;
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    });
+
+    const localFilePath = file.destination ? path.join(file.destination, file.filename) : path.join(process.cwd(), 'uploads', file.filename);
+
+    console.log('🚀 UPLOADING TO CLOUDINARY FROM TEST ENDPOINT:', { localFilePath });
+
+    const uploadResult = await cloudinary.uploader.upload(localFilePath, {
+      folder: 'test',
+      resource_type: 'auto',
+      use_filename: true,
+      unique_filename: false,
+    });
+
+    console.log('✅ TEST UPLOAD SUCCESS:', { publicId: uploadResult.public_id, url: uploadResult.secure_url });
+
+    // Clean up local file
+    try { if (fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath); } catch (e) { }
+
+    res.json({
+      success: true,
+      message: 'File uploaded to Cloudinary successfully',
+      cloudinaryUrl: uploadResult.secure_url,
+      publicId: uploadResult.public_id,
+      testThis: `Copy and open this URL in your browser to verify the image loads: ${uploadResult.secure_url}`,
+    });
+  } catch (error) {
+    console.error('❌ TEST UPLOAD FAILED:', { error: error.message, code: error.code, status: error.http_code });
+    res.status(500).json({
+      error: 'Upload to Cloudinary failed',
+      message: error.message,
+      code: error.code,
+      httpStatus: error.http_code,
+    });
+  }
+});
+
 export default router;
