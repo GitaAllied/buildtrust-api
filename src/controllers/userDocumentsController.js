@@ -1,6 +1,16 @@
 import fs from 'fs';
 import path from 'path';
 import pool from '../config/database.js';
+import cloudinaryModule from 'cloudinary';
+
+const cloudinary = cloudinaryModule.v2;
+if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+}
 
 export const uploadDocument = async (req, res) => {
   try {
@@ -34,7 +44,23 @@ export const uploadDocument = async (req, res) => {
     }
 
     const uploadsBase = process.env.BACKEND_URL ? `${process.env.BACKEND_URL}/uploads` : `${req.protocol}://${req.get('host')}/uploads`;
-    const url = `${uploadsBase}/${type}/${file.filename}`;
+    let url = `${uploadsBase}/${type}/${file.filename}`;
+
+    // If Cloudinary is configured, upload the saved local file to Cloudinary and use its secure URL.
+    const localFilePath = file && file.destination ? path.join(file.destination, file.filename) : path.join(process.cwd(), 'uploads', type, file.filename);
+    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+      try {
+        const uploadResult = await cloudinary.uploader.upload(localFilePath, { folder: type, resource_type: 'auto', use_filename: true, unique_filename: false });
+        if (uploadResult && uploadResult.secure_url) {
+          url = uploadResult.secure_url;
+        }
+      } catch (e) {
+        console.warn('Cloudinary upload failed, falling back to local URL:', e.message);
+      }
+
+      // Remove local file after uploading to Cloudinary
+      try { if (fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath); } catch (e) { console.warn('Failed to remove local file after Cloudinary upload:', e.message); }
+    }
 
     const metadata = JSON.stringify({ originalName: file.originalname, mimeType: file.mimetype });
       // If there is an existing declined document (verified = 2) for this user and type,
@@ -63,6 +89,21 @@ export const uploadDocument = async (req, res) => {
         try {
           const oldPath = path.join(process.cwd(), 'uploads', existing.type || '', existing.filename);
           if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        } catch (e) {
+          console.warn('Failed to remove old declined file from disk:', e.message);
+        }
+
+        // If the previous URL points to Cloudinary, attempt to remove the old resource there as well
+        try {
+          if (process.env.CLOUDINARY_CLOUD_NAME && existing.url && existing.url.includes('res.cloudinary.com')) {
+            const parts = existing.url.split('/upload/');
+            if (parts.length > 1) {
+              // Remove file extension and any querystring
+              const tail = parts[1].split('?')[0];
+              const publicId = tail.replace(/\.[a-zA-Z0-9]+$/, '');
+              await cloudinary.uploader.destroy(publicId, { resource_type: 'auto' });
+            }
+          }
         } catch (e) {
           console.warn('Failed to remove old declined file:', e.message);
         }
