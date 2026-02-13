@@ -736,7 +736,7 @@ export const changePassword = async (req, res) => {
 
 export const createSubAdmin = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, phone, location } = req.body;
 
     // Validate required fields
     if (!name || !email || !password) {
@@ -769,8 +769,8 @@ export const createSubAdmin = async (req, res) => {
 
     // Create sub-admin user (pre-verified)
     const [result] = await pool.query(
-      'INSERT INTO users (email, password, name, role, email_verified, is_active, setup_completed) VALUES (?, ?, ?, ?, TRUE, TRUE, TRUE)',
-      [email, hashedPassword, name, 'admin']
+      'INSERT INTO users (email, password, name, role, phone, location, email_verified, is_active, setup_completed) VALUES (?, ?, ?, ?, ?, ?, TRUE, TRUE, TRUE)',
+      [email, hashedPassword, name, 'sub_admin', phone || null, location || null]
     );
 
     const userId = result.insertId;
@@ -781,7 +781,9 @@ export const createSubAdmin = async (req, res) => {
         id: userId,
         email,
         name,
-        role: 'admin',
+        role: 'sub_admin',
+        phone: phone || null,
+        location: location || null,
         email_verified: true,
         is_active: true,
         setup_completed: true,

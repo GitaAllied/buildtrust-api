@@ -5,7 +5,7 @@ import fs from 'fs';
 import { authenticateToken } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { uploadDocumentSchema } from '../validation/schemas.js';
-import { uploadDocument, listDocuments, deleteDocument, listAllDocuments, verifyDocument } from '../controllers/userDocumentsController.js';
+import { uploadDocument, listDocuments, deleteDocument, listAllDocuments, verifyDocument, approveDocument, declineDocument } from '../controllers/userDocumentsController.js';
 
 const router = express.Router();
 
@@ -94,5 +94,11 @@ router.delete('/:id/documents/:docId', authenticateToken, deleteDocument);
 router.get('/admin/documents', authenticateToken, listAllDocuments);
 // PATCH /api/users/admin/documents/:docId - verify/unverify document (admin only)
 router.patch('/admin/documents/:docId', authenticateToken, verifyDocument);
+
+// POST /api/users/:id/documents/:docId/approve - approve document (admin only)
+router.post('/:id/documents/:docId/approve', authenticateToken, approveDocument);
+
+// POST /api/users/:id/documents/:docId/decline - decline document with reason (admin only)
+router.post('/:id/documents/:docId/decline', authenticateToken, declineDocument);
 
 export default router;

@@ -559,8 +559,17 @@ export async function initializeDatabase() {
     try {
       await pool.query("ALTER TABLE user_documents MODIFY COLUMN filename VARCHAR(255) NOT NULL");
       await pool.query("ALTER TABLE user_documents MODIFY COLUMN url VARCHAR(1000) NOT NULL");
+      // Add decline_reason column for document rejection tracking
+      await pool.query("ALTER TABLE user_documents ADD COLUMN decline_reason TEXT NULL");
     } catch (err) {
-      // ignore
+      // ignore if column already exists
+    }
+
+    // Add documents_verified column to users table for tracking developer document verification status
+    try {
+      await pool.query("ALTER TABLE users ADD COLUMN documents_verified BOOLEAN DEFAULT FALSE");
+    } catch (err) {
+      // ignore if column already exists
     }
 
     // Create form_submissions table for auditing form submissions

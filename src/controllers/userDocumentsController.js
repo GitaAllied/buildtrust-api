@@ -37,13 +37,53 @@ export const uploadDocument = async (req, res) => {
     const url = `${uploadsBase}/${type}/${file.filename}`;
 
     const metadata = JSON.stringify({ originalName: file.originalname, mimeType: file.mimetype });
+      // If there is an existing declined document (verified = 2) for this user and type,
+      // replace it instead of inserting a new row. For identity uploads, the DB may
+      // use multiple specific types (government_id, business_registration, selfie),
+      // so treat 'identity' as a group when searching for existing declined docs.
+      let existingRows;
+      if (type === 'identity') {
+        const identityTypes = ['government_id', 'business_registration', 'selfie'];
+        const placeholders = identityTypes.map(() => '?').join(',');
+        const sql = `SELECT id, filename, type FROM user_documents WHERE user_id = ? AND type IN (${placeholders}) AND verified = 2 LIMIT 1`;
+        existingRows = await pool.query(sql, [userId, ...identityTypes]);
+        // pool.query returns [rows, fields] so keep compatible below
+        existingRows = existingRows[0];
+      } else {
+        const [rows] = await pool.query(
+          'SELECT id, filename, type FROM user_documents WHERE user_id = ? AND type = ? AND verified = 2 LIMIT 1',
+          [userId, type]
+        );
+        existingRows = rows;
+      }
 
-    const [result] = await pool.query(
-      'INSERT INTO user_documents (user_id, type, filename, url, size, metadata) VALUES (?, ?, ?, ?, ?, ?)',
-      [userId, type, file.filename, url, file.size, metadata]
-    );
+      if (Array.isArray(existingRows) && existingRows.length > 0) {
+        const existing = existingRows[0];
+        // remove old file from disk if present
+        try {
+          const oldPath = path.join(process.cwd(), 'uploads', existing.type || '', existing.filename);
+          if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        } catch (e) {
+          console.warn('Failed to remove old declined file:', e.message);
+        }
 
-    res.status(201).json({ id: result.insertId, user_id: userId, type, filename: file.filename, url, size: file.size, metadata: JSON.parse(metadata) });
+        // update existing DB row to new file and mark unverified
+        await pool.query(
+          'UPDATE user_documents SET filename = ?, url = ?, size = ?, metadata = ?, verified = 0, decline_reason = NULL WHERE id = ?',
+          [file.filename, url, file.size, metadata, existing.id]
+        );
+
+        // return updated document
+        res.status(200).json({ id: existing.id, user_id: userId, type, filename: file.filename, url, size: file.size, metadata: JSON.parse(metadata), verified: 0, replaced: true });
+        return;
+      }
+
+      const [result] = await pool.query(
+        'INSERT INTO user_documents (user_id, type, filename, url, size, metadata, verified) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [userId, type, file.filename, url, file.size, metadata, 0]
+      );
+
+      res.status(201).json({ id: result.insertId, user_id: userId, type, filename: file.filename, url, size: file.size, metadata: JSON.parse(metadata), verified: 0 });
   } catch (error) {
 
     res.status(500).json({ error: 'An error occurred while uploading document' });
@@ -54,12 +94,12 @@ export const listDocuments = async (req, res) => {
   try {
     const userId = parseInt(req.params.id, 10);
 
-    // Only allow owners (or admins, later) to list
-    if (!req.user || req.user.userId !== userId) {
+    // Allow owners or admins/sub_admins to list
+    if (!req.user || (req.user.userId !== userId && req.user.role !== 'admin' && req.user.role !== 'sub_admin')) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    const [rows] = await pool.query('SELECT id, type, filename, url, size, metadata, verified, created_at FROM user_documents WHERE user_id = ?', [userId]);
+    const [rows] = await pool.query('SELECT id, type, filename, url, size, metadata, verified, decline_reason, created_at FROM user_documents WHERE user_id = ?', [userId]);
 
     // Parse metadata JSON
     const docs = rows.map(r => ({ ...r, metadata: r.metadata ? JSON.parse(r.metadata) : null }));
@@ -113,7 +153,7 @@ export const listAllDocuments = async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    const [rows] = await pool.query(`SELECT d.id, d.user_id, u.email as user_email, d.type, d.filename, d.url, d.size, d.metadata, d.verified, d.created_at
+    const [rows] = await pool.query(`SELECT d.id, d.user_id, u.email as user_email, d.type, d.filename, d.url, d.size, d.metadata, d.verified, d.decline_reason, d.created_at
       FROM user_documents d
       JOIN users u ON u.id = d.user_id
       ORDER BY d.created_at DESC`);
@@ -150,5 +190,106 @@ export const verifyDocument = async (req, res) => {
   } catch (error) {
     console.error('Verify document error:', error);
     res.status(500).json({ error: 'An error occurred while verifying document' });
+  }
+};
+
+export const approveDocument = async (req, res) => {
+  try {
+    // Only admins can approve documents
+    if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'sub_admin')) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const userId = parseInt(req.params.id, 10);
+    const docId = parseInt(req.params.docId, 10);
+
+    // Verify document belongs to the user
+    const [rows] = await pool.query('SELECT id, user_id, verified, created_at FROM user_documents WHERE id = ? AND user_id = ?', [docId, userId]);
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    // Update document to verified
+    await pool.query('UPDATE user_documents SET verified = 1, decline_reason = NULL WHERE id = ?', [docId]);
+
+    // Update user documents_verified flag when required document types are approved.
+    // Required set: an identity doc (government_id OR business_registration OR selfie),
+    // at least one license, and at least one certification. When all present and verified,
+    // mark the user as documents_verified.
+    try {
+      const [identityCountRows] = await pool.query(
+        'SELECT COUNT(*) as count FROM user_documents WHERE user_id = ? AND type IN ("government_id","business_registration","selfie") AND verified = 1',
+        [userId]
+      );
+
+      const [licenseCountRows] = await pool.query(
+        'SELECT COUNT(*) as count FROM user_documents WHERE user_id = ? AND type = "license" AND verified = 1',
+        [userId]
+      );
+
+      const [certCountRows] = await pool.query(
+        'SELECT COUNT(*) as count FROM user_documents WHERE user_id = ? AND type = "certification" AND verified = 1',
+        [userId]
+      );
+
+      const identityVerified = identityCountRows[0] && identityCountRows[0].count > 0;
+      const licenseVerified = licenseCountRows[0] && licenseCountRows[0].count > 0;
+      const certificationVerified = certCountRows[0] && certCountRows[0].count > 0;
+
+      if (identityVerified && licenseVerified && certificationVerified) {
+        await pool.query('UPDATE users SET documents_verified = 1 WHERE id = ? AND role = "developer"', [userId]);
+      }
+    } catch (e) {
+      console.error('Failed to update documents_verified flag:', e);
+    }
+
+    const [updatedDoc] = await pool.query('SELECT id, user_id, type, filename, url, size, verified, created_at, decline_reason FROM user_documents WHERE id = ?', [docId]);
+    
+    res.json({ 
+      message: 'Document approved successfully',
+      document: updatedDoc[0]
+    });
+  } catch (error) {
+    console.error('Approve document error:', error);
+    res.status(500).json({ error: 'An error occurred while approving document' });
+  }
+};
+
+export const declineDocument = async (req, res) => {
+  try {
+    // Only admins can decline documents
+    if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'sub_admin')) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const userId = parseInt(req.params.id, 10);
+    const docId = parseInt(req.params.docId, 10);
+    const { reason } = req.body;
+
+    if (!reason || typeof reason !== 'string' || reason.trim() === '') {
+      return res.status(400).json({ error: 'Decline reason is required' });
+    }
+
+    // Verify document belongs to the user
+    const [rows] = await pool.query('SELECT id, user_id FROM user_documents WHERE id = ? AND user_id = ?', [docId, userId]);
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    // Update document with decline reason and mark as declined (verified = 2)
+    await pool.query('UPDATE user_documents SET verified = 2, decline_reason = ? WHERE id = ?', [reason.trim(), docId]);
+
+    // Mark user documents as not verified
+    await pool.query('UPDATE users SET documents_verified = 0 WHERE id = ?', [userId]);
+
+    const [updatedDoc] = await pool.query('SELECT id, user_id, type, filename, url, size, verified, created_at, decline_reason FROM user_documents WHERE id = ?', [docId]);
+    
+    res.json({ 
+      message: 'Document declined and user notified',
+      document: updatedDoc[0]
+    });
+  } catch (error) {
+    console.error('Decline document error:', error);
+    res.status(500).json({ error: 'An error occurred while declining document' });
   }
 };

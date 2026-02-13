@@ -29,6 +29,8 @@ export const getDevelopers = async (req, res) => {
           company_type,
           email_verified,
           setup_completed,
+          documents_verified,
+          trust_score,
           created_at
         FROM users 
         WHERE role = 'developer' AND setup_completed = true
@@ -199,6 +201,7 @@ export const getDevelopers = async (req, res) => {
               experience: dev.years_experience || 0,
               transparencyScore: Math.min(transparencyScore, 100),
               verified: dev.email_verified === true,
+              documents_verified: dev.documents_verified || 0,
               bio: dev.bio || 'Professional developer',
               projects: projectsWithMedia.map(p => ({
                 id: p.id,
@@ -452,6 +455,7 @@ export const getDeveloperById = async (req, res) => {
         name: dev.name,
         contact_person: dev.name,
         is_verified: dev.email_verified === 1 || dev.email_verified === true,
+        documents_verified: dev.documents_verified || 0,
         location: finalLocation,
         state: locationData.state,
         country: locationData.country,

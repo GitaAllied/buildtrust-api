@@ -1,4 +1,5 @@
 import pool from '../config/database.js';
+import bcrypt from 'bcryptjs';
 
 export const getSettings = async (req, res) => {
   try {
@@ -184,15 +185,21 @@ export const updatePassword = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // In a real app, verify password hash using bcrypt
-    // For now, this is a placeholder
-    console.log('Password update requested for user:', userId);
-
-    // Hash new password (use bcrypt in production)
-    // const hashedPassword = await bcrypt.hash(newPassword, 10);
+    // Verify current password using bcrypt
+    const user = users[0];
+    const passwordMatch = await bcrypt.compare(currentPassword, user.password);
     
-    // await pool.query(`UPDATE users SET password = ? WHERE id = ?`, [hashedPassword, userId]);
+    if (!passwordMatch) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
 
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    
+    // Update password in database
+    await pool.query(`UPDATE users SET password = ? WHERE id = ?`, [hashedPassword, userId]);
+
+    console.log('Password updated successfully for user:', userId);
     res.json({ success: true, message: 'Password updated successfully' });
   } catch (error) {
     console.error('Error updating password:', error);
