@@ -4,12 +4,24 @@ import pool from '../config/database.js';
 import cloudinaryModule from 'cloudinary';
 
 const cloudinary = cloudinaryModule.v2;
+
+// Log Cloudinary configuration status
+console.log('🔍 CLOUDINARY CONFIG CHECK:', {
+  hasCloudName: !!process.env.CLOUDINARY_CLOUD_NAME,
+  hasApiKey: !!process.env.CLOUDINARY_API_KEY,
+  hasApiSecret: !!process.env.CLOUDINARY_API_SECRET,
+  cloudName: process.env.CLOUDINARY_CLOUD_NAME || 'NOT SET',
+});
+
 if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
   });
+  console.log('✅ CLOUDINARY INITIALIZED WITH CONFIG');
+} else {
+  console.warn('⚠️ CLOUDINARY CREDENTIALS NOT FULLY SET - will use local storage');
 }
 
 export const uploadDocument = async (req, res) => {
@@ -48,14 +60,25 @@ export const uploadDocument = async (req, res) => {
 
     // If Cloudinary is configured, upload the saved local file to Cloudinary and use its secure URL.
     const localFilePath = file && file.destination ? path.join(file.destination, file.filename) : path.join(process.cwd(), 'uploads', type, file.filename);
+    
+    console.log('📤 DOCUMENT UPLOAD INITIATED:', {
+      userId,
+      type,
+      filename: file.filename,
+      localFilePath,
+      cloudinaryConfigured: !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET),
+    });
+
     if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
       try {
+        console.log('🚀 UPLOADING TO CLOUDINARY:', { folder: type, localFilePath });
         const uploadResult = await cloudinary.uploader.upload(localFilePath, { folder: type, resource_type: 'auto', use_filename: true, unique_filename: false });
+        console.log('✅ CLOUDINARY UPLOAD SUCCESS:', { publicId: uploadResult.public_id, url: uploadResult.secure_url });
         if (uploadResult && uploadResult.secure_url) {
           url = uploadResult.secure_url;
         }
       } catch (e) {
-        console.warn('Cloudinary upload failed, falling back to local URL:', e.message);
+        console.error('❌ CLOUDINARY UPLOAD FAILED:', { error: e.message, code: e.code, status: e.http_code });
       }
 
       // Remove local file after uploading to Cloudinary
