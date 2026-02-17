@@ -13,6 +13,7 @@ import reportsRoutes from './routes/reports.js';
 import settingsRoutes from './routes/settings.js';
 import supportRoutes from './routes/support.js';
 import paymentsRoutes from './routes/payments.js';
+import notificationsRoutes from './routes/notifications.js';
 import { initializeDatabase } from './config/dbInit.js';
 // migrations removed: dbInit handles required schema changes
 import fs from 'fs';
@@ -74,6 +75,7 @@ app.use(auditSubmission);
 app.use('/api/auth', authRoutes);
 app.use('/api', usersRoutes);
 app.use('/api/users', userDocumentsRoutes);
+app.use('/api/users', notificationsRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/developers', developersRoutes);
