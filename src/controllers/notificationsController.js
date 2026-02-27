@@ -178,6 +178,56 @@ export const getUserNotifications = async (req, res) => {
   }
 };
 
+export const getRecentMessages = async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId, 10);
+
+    // Ensure user can only see their own messages
+    if (!req.user || (req.user.userId !== userId && req.user.role !== 'admin')) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Fetch top 3 most recent messages within 48 hours
+    // Messages sent TO the user from developers in shared conversations
+    const [messages] = await pool.query(`
+      SELECT 
+        m.id,
+        m.sender_id,
+        u.name as developer,
+        m.content as lastMessage,
+        m.created_at as time,
+        IF(m.is_read = 0, true, false) as unread
+      FROM messages m
+      JOIN conversations c ON c.id = m.conversation_id
+      JOIN users u ON u.id = m.sender_id
+      WHERE (c.participant1_id = ? OR c.participant2_id = ?)
+      AND m.sender_id != ?
+      AND u.role = 'developer'
+      AND m.created_at > DATE_SUB(NOW(), INTERVAL 48 HOUR)
+      ORDER BY m.created_at DESC
+      LIMIT 3
+    `, [userId, userId, userId]);
+
+    if (!Array.isArray(messages)) {
+      return res.json({ messages: [] });
+    }
+
+    // Format messages with time ago
+    const formattedMessages = messages.map(msg => ({
+      id: msg.id,
+      developer: msg.developer || 'Developer',
+      lastMessage: msg.lastMessage || 'No message content',
+      time: getTimeAgo(msg.time),
+      unread: msg.unread,
+    }));
+
+    res.json({ messages: formattedMessages });
+  } catch (error) {
+    console.error('Get recent messages error:', error);
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+};
+
 // Helper function to convert timestamp to "X hours ago" format
 function getTimeAgo(timestamp) {
   if (!timestamp) return 'just now';
