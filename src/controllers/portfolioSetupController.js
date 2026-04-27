@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { sendPortfolioCreatedEmail } from '../services/email.js';
 import { lookupIp } from '../services/ipGeo.js';
+import { resolveBackendPath } from '../utils/projectRoot.js';
 
 /**
  * Helper function to ensure upload directories exist
@@ -19,7 +20,7 @@ const ensureUploadDirExists = (dir) => {
  * Handles both multer file objects (with .path) and raw file objects
  */
 const saveUploadedFile = (file, uploadSubdir) => {
-  const uploadsDir = path.join(process.cwd(), 'uploads', uploadSubdir);
+  const uploadsDir = resolveBackendPath('uploads', uploadSubdir);
   ensureUploadDirExists(uploadsDir);
   
   // If file already has a path from multer, move it to final location

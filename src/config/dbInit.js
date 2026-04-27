@@ -17,11 +17,15 @@ export async function initializeDatabase() {
       is_active BOOLEAN DEFAULT TRUE,
       email_verified BOOLEAN DEFAULT FALSE,
       last_login TIMESTAMP NULL,
+      is_online BOOLEAN DEFAULT FALSE,
+      last_seen TIMESTAMP NULL,
+      session_active BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_email (email),
       INDEX idx_role (role),
-      INDEX idx_is_active (is_active)
+      INDEX idx_is_active (is_active),
+      INDEX idx_is_online (is_online)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
@@ -30,6 +34,12 @@ export async function initializeDatabase() {
 
     // Allow name to be optional (nullable)
     await pool.query("ALTER TABLE users MODIFY COLUMN name VARCHAR(255) NULL");
+
+    // Add online status tracking columns (idempotent)
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT FALSE AFTER last_login");
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP NULL AFTER is_online");
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_active BOOLEAN DEFAULT FALSE AFTER last_seen");
+    await pool.query("ALTER TABLE users ADD INDEX IF NOT EXISTS idx_is_online (is_online)");
 
     // Create sessions table for token management
     await pool.query(`
@@ -177,26 +187,114 @@ export async function initializeDatabase() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS contracts (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        project_id INT NOT NULL,
-        developer_id INT NOT NULL,
-        application_id INT,
-        agreed_amount DECIMAL(10,2) NOT NULL,
-        agreed_days INT,
-        start_date DATE,
-        end_date DATE,
+        project_id INT,
+        is_template BOOLEAN DEFAULT FALSE,
         status ENUM('active', 'completed', 'terminated', 'disputed') DEFAULT 'active',
-        milestones JSON,
-        payment_terms TEXT,
+        contract_terms LONGTEXT,
+        developer_signature_url VARCHAR(1000) DEFAULT NULL,
+        client_signature_url VARCHAR(1000) DEFAULT NULL,
+        developer_signed_at TIMESTAMP NULL DEFAULT NULL,
+        client_signed_at TIMESTAMP NULL DEFAULT NULL,
+        needs_resign BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-        FOREIGN KEY (developer_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE SET NULL,
         INDEX idx_project_id (project_id),
-        INDEX idx_developer_id (developer_id),
-        INDEX idx_status (status)
+        INDEX idx_status (status),
+        INDEX idx_is_template (is_template)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    // Ensure contract_terms and needs_resign columns exist
+    const contractColumns = [
+      'contract_terms LONGTEXT',
+      'needs_resign BOOLEAN DEFAULT FALSE',
+      'is_template BOOLEAN DEFAULT FALSE'
+    ];
+
+    for (const column of contractColumns) {
+      try {
+        await pool.query(`ALTER TABLE contracts ADD COLUMN ${column}`);
+      } catch (err) {
+        // Column already exists or other harmless error
+      }
+    }
+
+    // Make project_id and developer_id nullable (safe to run multiple times)
+    try {
+      await pool.query(`ALTER TABLE contracts MODIFY COLUMN project_id INT NULL`);
+    } catch (err) {
+      // Already nullable
+    }
+
+    // Drop developer_id column from contracts (use projects.developer_id instead)
+    try {
+      await pool.query(`ALTER TABLE contracts DROP COLUMN IF EXISTS developer_id`);
+    } catch (err) {
+      // Column doesn't exist or other harmless error
+    }
+
+    // Drop application_id column from contracts
+    try {
+      await pool.query(`ALTER TABLE contracts DROP COLUMN IF EXISTS application_id`);
+    } catch (err) {
+      // Column doesn't exist or other harmless error
+    }
+
+    // Create or ensure the template row exists
+    try {
+      const [templateRows] = await pool.query(
+        'SELECT id FROM contracts WHERE is_template = TRUE LIMIT 1'
+      );
+
+      if (templateRows.length === 0) {
+        // Insert default template row if it doesn't exist
+        const defaultTemplate = `BUILDTRUST SERVICE AGREEMENT & LEGAL CONTRACT
+
+1. PARTIES & SCOPE
+This binding contract is entered into between: (a) Client as Project Owner, (b) Developer as Service Provider, and (c) BuildTrust Africa as Platform Facilitator. Developer agrees to provide construction/development services as specified below within mutually agreed scope and timeline.
+
+2. PROJECT SCOPE & DELIVERABLES
+Developer is responsible for quality workmanship, adherence to specifications, timely completion, regular progress updates, and site safety compliance. Any work outside this scope requires written approval and separate agreement.
+
+3. AGREED CONTRACT VALUE & PAYMENT TERMS
+Payments are released in milestones upon verified completion of project phases. Client shall make payments within 7 days of invoice. Late payments incur 2% monthly interest. Disputes over payment must be raised within 30 days of invoice.
+
+4. PERFORMANCE & LIABILITY
+Developer warrants professional execution of all work. Developer carries liability insurance covering worksite accidents and property damage. BuildTrust provides platform mediation but does not assume contractor liability. Client liability is limited to contract value only. Maximum dispute compensation is the project fee paid.
+
+5. BREACH & REMEDIES
+Developer Breach: Failure to meet quality standards, missing deadlines without documented cause, or abandonment results in: (i) work withholding, (ii) contract termination with 5-day notice, (iii) funds forfeiture, (iv) negative platform rating, and (v) potential legal action for damages. Client Breach: Non-payment beyond 14 days allows Developer to: (i) suspend work, (ii) charge storage/holding fees, or (iii) terminate contract and pursue legal collection.
+
+6. DISPUTE RESOLUTION
+All disputes are first referred to BuildTrust's mediation team (14-day resolution window). If unresolved, disputes proceed to arbitration in accordance with applicable laws of the project jurisdiction. Both parties waive right to pursue claims outside this platform unless arbitration fails. Legal fees are borne by the breaching party.
+
+7. TERMINATION & CANCELLATION
+Client may cancel with 14-day notice and 20% fee forfeiture if no work commenced. Developer may terminate only for non-payment after 7-day written notice. Premature termination by either party may result in damages claim equal to 15% of remaining contract value plus verified costs incurred.
+
+8. CONFIDENTIALITY & IP RIGHTS
+Both parties shall maintain confidentiality of project specifications and sensitive information. Client retains all intellectual property rights to designs and plans. Developer may list project in portfolio only with written Client consent. Breach of confidentiality allows immediate contract termination and damages.
+
+9. INSURANCE & COMPLIANCE
+Developer must maintain liability insurance (minimum coverage based on project scope). Developer is responsible for all regulatory compliance, permits, and licenses. Developer indemnifies Client and BuildTrust against third-party claims. Failure to maintain insurance voids all protections under this contract.
+
+10. LEGAL JURISDICTION
+This contract is governed by the laws of the project location jurisdiction. Both parties submit to BuildTrust's platform policies and applicable legal frameworks. Enforcement is through platform arbitration initially, then civil courts if necessary. All notices must be in writing via registered platform messages.
+
+11. PLATFORM PROTECTIONS
+BuildTrust Africa holds funds in escrow, releasing only upon verified milestone completion. BuildTrust verifies developer credentials and maintains dispute records. BuildTrust may freeze accounts for violations. By signing, both parties agree to BuildTrust's terms of service and dispute resolution process. BuildTrust's liability is limited to fund safeguarding only.
+
+⚠️ LEGAL NOTICE - BINDING CONTRACT
+By affixing your digital signature, you acknowledge: (1) You have read and understood this entire contract, (2) You have legal authority to execute this agreement, (3) You consent to electronic signatures as legally binding, (4) You accept all terms including breach remedies and legal jurisdiction, (5) Any disputes will follow platform arbitration before court proceedings. This is a legally enforceable contract.`;
+
+        await pool.query(
+          'INSERT INTO contracts (project_id, developer_id, is_template, status, contract_terms) VALUES (NULL, NULL, TRUE, "active", ?)',
+          [defaultTemplate]
+        );
+      }
+    } catch (err) {
+      console.log('Template row setup note:', err.message);
+    }
 
     // Create conversations table
     await pool.query(`
@@ -413,7 +511,6 @@ export async function initializeDatabase() {
     // Add client request metadata columns
     try {
       await pool.query(`ALTER TABLE projects ADD COLUMN building_type VARCHAR(100)`);
-      await pool.query(`ALTER TABLE projects ADD COLUMN budget_range VARCHAR(50)`);
       await pool.query(`ALTER TABLE projects ADD COLUMN start_date DATE`);
       await pool.query(`ALTER TABLE projects ADD COLUMN duration VARCHAR(50)`);
     } catch (error) {
@@ -626,6 +723,13 @@ export async function initializeDatabase() {
       // Column already exists
     }
 
+    // Add status column to conversations table if it doesn't exist (migration)
+    try {
+      await pool.query(`ALTER TABLE conversations ADD COLUMN status ENUM('active', 'archived') DEFAULT 'active'`);
+    } catch (e) {
+      // Column already exists
+    }
+
     // Create default admin user if it doesn't exist
     try {
       const [existingAdmin] = await pool.query(
@@ -641,10 +745,6 @@ export async function initializeDatabase() {
           'INSERT INTO users (email, password, name, role, email_verified) VALUES (?, ?, ?, ?, TRUE)',
           ['admin@gmail.com', hashedPassword, 'Admin', 'admin']
         );
-        
-        console.info('✅ Default admin user created');
-      } else {
-        console.info('ℹ️ Default admin user already exists');
       }
     } catch (adminError) {
       console.error('⚠️ Error creating default admin user:', adminError.message);
@@ -734,8 +834,6 @@ export async function initializeDatabase() {
       console.error('⚠️ Error running migrations:', migrationError.message);
       // Don't throw - let initialization continue even if migrations fail
     }
-
-    console.info('✅ Database tables initialized successfully');
   } catch (error) {
     console.error('❌ Error initializing database:', error);
     throw error;
@@ -753,13 +851,10 @@ async function runSchemaMigrations() {
     const developerIdExists = columns && columns.length > 0;
 
     if (!developerIdExists) {
-      console.log('🔄 Running migration: add developer_id to projects table...');
-
       // Add developer_id column
       await pool.query(
         `ALTER TABLE projects ADD COLUMN developer_id INT NULL AFTER client_id`
       );
-      console.log('✓ Added developer_id column');
 
       // Add foreign key constraint
       try {
@@ -767,10 +862,9 @@ async function runSchemaMigrations() {
           `ALTER TABLE projects ADD CONSTRAINT fk_projects_developer_id 
            FOREIGN KEY (developer_id) REFERENCES users(id) ON DELETE SET NULL`
         );
-        console.log('✓ Added foreign key constraint');
       } catch (fkError) {
         if (fkError.message.includes('already exists')) {
-          console.log('✓ Foreign key already exists');
+          // Foreign key already exists, continue
         } else {
           throw fkError;
         }
@@ -781,16 +875,13 @@ async function runSchemaMigrations() {
         await pool.query(
           `ALTER TABLE projects ADD INDEX idx_developer_id (developer_id)`
         );
-        console.log('✓ Added index on developer_id');
       } catch (indexError) {
         if (indexError.message.includes('already exists')) {
-          console.log('✓ Index already exists');
+          // Index already exists, continue
         } else {
           throw indexError;
         }
       }
-    } else {
-      console.log('✓ developer_id column already exists');
     }
 
     // Ensure description column is nullable (always attempt)
@@ -798,18 +889,8 @@ async function runSchemaMigrations() {
       await pool.query(
         `ALTER TABLE projects MODIFY COLUMN description TEXT NULL`
       );
-      console.log('✓ description column set to nullable');
     } catch (descError) {
-      // Some MySQL versions return different messages; log and continue
-      console.log('ℹ️ description column modify skipped or already nullable:', descError.message);
-    }
-
-    // Ensure contracts.agreed_amount is nullable (safe to run multiple times)
-    try {
-      await pool.query(`ALTER TABLE contracts MODIFY COLUMN agreed_amount DECIMAL(10,2) NULL DEFAULT NULL`);
-      console.log('✓ contracts.agreed_amount set to nullable');
-    } catch (amtErr) {
-      console.log('ℹ️ contracts.agreed_amount modify skipped or already nullable:', amtErr.message);
+      // Some MySQL versions return different messages; continue if already nullable
     }
 
     // Create settings table
@@ -828,9 +909,6 @@ async function runSchemaMigrations() {
         INDEX idx_updated_at (updated_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
-    console.log('✓ settings table created/verified');
-
-    console.log('✅ Schema migrations completed successfully');
   } catch (error) {
     console.error('❌ Migration error:', error.message);
     throw error;

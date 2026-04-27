@@ -157,7 +157,7 @@ export const login = async (req, res) => {
 
     // Find user
     const [users] = await pool.query(
-      'SELECT id, email, password, name, role, email_verified, setup_completed, is_active, profile_image, ip_address, current_state, current_country FROM users WHERE email = ?',
+      'SELECT id, email, password, name, role, email_verified, setup_completed, is_active, profile_image, ip_address, current_state, current_country, trust_score, rating, total_reviews FROM users WHERE email = ?',
       [email]
     );
 
@@ -202,7 +202,7 @@ export const login = async (req, res) => {
 
     await pool.query('INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, ?)', [user.id, token, expiresAt]);
 
-    // Update last_login timestamp and IP/location if changed
+    // Update last_login timestamp and IP/location if changed, and set online status
     try {
       const storedIp = user.ip_address;
       
@@ -215,28 +215,28 @@ export const login = async (req, res) => {
         if (geoData && (geoData.state || geoData.country)) {
           console.log(`🌍 Geolocation found for ${clientIp}:`, geoData);
           const updateResult = await pool.query(
-            'UPDATE users SET last_login = CURRENT_TIMESTAMP, ip_address = ?, current_state = ?, current_country = ? WHERE id = ?',
+            'UPDATE users SET last_login = CURRENT_TIMESTAMP, ip_address = ?, current_state = ?, current_country = ?, is_online = TRUE, session_active = TRUE, last_seen = CURRENT_TIMESTAMP WHERE id = ?',
             [clientIp, geoData.state || null, geoData.country || null, user.id]
           );
-          console.log(`✅ IP and location updated for user id=${user.id}`);
+          console.log(`✅ IP, location, and online status updated for user id=${user.id}`);
         } else {
-          // Only update IP and last_login if geolocation lookup failed
+          // Only update IP, last_login, and online status if geolocation lookup failed
           const updateResult = await pool.query(
-            'UPDATE users SET last_login = CURRENT_TIMESTAMP, ip_address = ? WHERE id = ?',
+            'UPDATE users SET last_login = CURRENT_TIMESTAMP, ip_address = ?, is_online = TRUE, session_active = TRUE, last_seen = CURRENT_TIMESTAMP WHERE id = ?',
             [clientIp, user.id]
           );
-          console.log(`✅ IP updated (no geo data) for user id=${user.id}`);
+          console.log(`✅ IP and online status updated (no geo data) for user id=${user.id}`);
         }
       } else {
-        // Same IP, just update last_login
+        // Same IP, just update last_login and online status
         const updateResult = await pool.query(
-          'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?',
+          'UPDATE users SET last_login = CURRENT_TIMESTAMP, is_online = TRUE, session_active = TRUE, last_seen = CURRENT_TIMESTAMP WHERE id = ?',
           [user.id]
         );
-        console.log(`✅ last_login updated for user id=${user.id}`);
+        console.log(`✅ last_login and online status updated for user id=${user.id}`);
       }
     } catch (updateError) {
-      console.error(`❌ Error updating user location/login for user id=${user.id}:`, updateError);
+      console.error(`❌ Error updating user location/login/online status for user id=${user.id}:`, updateError);
     }
 
     res.json({
@@ -251,6 +251,9 @@ export const login = async (req, res) => {
         setup_completed: Boolean(user.setup_completed || false),
         is_active: Number(user.is_active || 0),
         profile_image: user.profile_image || null,
+        trust_score: user.trust_score || 0,
+        rating: user.rating || 0,
+        total_reviews: user.total_reviews || 0,
       },
     });
   } catch (error) {
@@ -280,9 +283,9 @@ export const getMe = async (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired session' });
     }
 
-    // Get user data - fetch ALL user fields including is_active and profile_image
+    // Get user data - fetch ALL user fields including is_active, profile_image, and rating fields
     const [users] = await pool.query(
-      'SELECT id, email, name, role, phone, bio, location, created_at, email_verified, setup_completed, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages, is_active, profile_image FROM users WHERE id = ?',
+      'SELECT id, email, name, role, phone, bio, location, created_at, email_verified, setup_completed, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages, is_active, profile_image, trust_score, rating, total_reviews FROM users WHERE id = ?',
       [decoded.userId]
     );
 
@@ -318,6 +321,9 @@ export const getMe = async (req, res) => {
         specializations: user.specializations ? JSON.parse(user.specializations) : [],
         languages: user.languages ? JSON.parse(user.languages) : [],
         profile_image: user.profile_image || null,
+        trust_score: user.trust_score || 0,
+        rating: user.rating || 0,
+        total_reviews: user.total_reviews || 0,
       }
     });
   } catch (error) {
@@ -523,13 +529,26 @@ export const logout = async (req, res) => {
     const token = authHeader && authHeader.split(' ')[1];
 
     if (token) {
+      // Get user ID from token to update online status
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
+        if (decoded && decoded.userId) {
+          // Mark user as offline
+          await pool.query('UPDATE users SET is_online = FALSE, session_active = FALSE WHERE id = ?', [decoded.userId]);
+          console.log(`👋 User id=${decoded.userId} logged out and marked offline`);
+        }
+      } catch (tokenError) {
+        // Token might be invalid, continue with session deletion
+        console.warn('Could not decode token for logout:', tokenError.message);
+      }
+
       // Delete session
       await pool.query('DELETE FROM sessions WHERE token = ?', [token]);
     }
 
     res.json({ message: 'Signed out successfully' });
   } catch (error) {
-
+    console.error('Logout error:', error);
     res.status(500).json({ error: 'An error occurred while signing out' });
   }
 };

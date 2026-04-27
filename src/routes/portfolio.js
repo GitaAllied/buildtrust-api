@@ -3,11 +3,12 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { completePortfolioSetup } from '../controllers/portfolioSetupController.js';
+import { resolveBackendPath } from '../utils/projectRoot.js';
 
 const router = express.Router();
 
 // Ensure temp upload directory exists
-const tempDir = path.join(process.cwd(), 'uploads', 'temp');
+const tempDir = resolveBackendPath('uploads', 'temp');
 if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
 }

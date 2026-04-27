@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import https from "https";
+import { resolveRepoPath } from '../utils/projectRoot.js';
 
 // Generate secure verification token
 export const generateVerificationToken = () => {
@@ -11,7 +12,7 @@ export const generateVerificationToken = () => {
 // Get logo as base64 data URI
 const getLogoBase64 = () => {
   try {
-    const logoPath = path.join(process.cwd(), '../frontend/public/Logo.png');
+    const logoPath = resolveRepoPath('frontend', 'public', 'Logo.png');
     const imageBuffer = fs.readFileSync(logoPath);
     const base64 = imageBuffer.toString('base64');
     return `data:image/png;base64,${base64}`;

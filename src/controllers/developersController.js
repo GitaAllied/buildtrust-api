@@ -2,6 +2,7 @@ import pool from '../config/database.js';
 import { getDeveloperLocation } from '../services/geolocation.js';
 import fs from 'fs';
 import path from 'path';
+import { resolveBackendPath } from '../utils/projectRoot.js';
 
 /**
  * Get all developers with their portfolios and projects
@@ -91,7 +92,7 @@ export const getDevelopers = async (req, res) => {
                     if (url && typeof url === 'string') {
                       // Remove leading slash if present
                       const rel = url.replace(/^\/+/, '');
-                      const absPath = path.join(process.cwd(), rel);
+                      const absPath = resolveBackendPath(rel);
                       exists = fs.existsSync(absPath);
                     }
                   } catch (e) {
@@ -133,7 +134,7 @@ export const getDevelopers = async (req, res) => {
                 try {
                   if (url && typeof url === 'string') {
                     const rel = url.replace(/^\/+/, '');
-                    const absPath = path.join(process.cwd(), rel);
+                    const absPath = resolveBackendPath(rel);
                     exists = fs.existsSync(absPath);
                   }
                 } catch (e) {
@@ -195,6 +196,7 @@ export const getDevelopers = async (req, res) => {
             return {
               id: dev.id,
               name: dev.name || 'Developer',
+              email: dev.email || '',
               location: finalLocation,
               state: locationData.state,
               country: locationData.country,
@@ -232,6 +234,7 @@ export const getDevelopers = async (req, res) => {
             return {
               id: dev.id,
               name: dev.name || 'Developer',
+              email: dev.email || '',
               location: locationData.location || 'Nigeria',
               state: locationData.state,
               country: locationData.country,
@@ -340,7 +343,7 @@ export const getDeveloperById = async (req, res) => {
             try {
               if (url && typeof url === 'string') {
                 const rel = url.replace(/^\/+/, '');
-                const absPath = path.join(process.cwd(), rel);
+                const absPath = resolveBackendPath(rel);
                 exists = fs.existsSync(absPath);
               }
             } catch (e) {
@@ -382,7 +385,7 @@ export const getDeveloperById = async (req, res) => {
           try {
             if (url && typeof url === 'string') {
               const rel = url.replace(/^\/+/, '');
-              const absPath = path.join(process.cwd(), rel);
+              const absPath = resolveBackendPath(rel);
               exists = fs.existsSync(absPath);
             }
           } catch (e) {

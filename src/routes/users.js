@@ -3,6 +3,7 @@ import path from 'path';
 import multer from 'multer';
 import fs from 'fs';
 import { getUsers, getUser, updateUser, deleteUser, updateProfileImage } from '../controllers/usersController.js';
+import { resolveBackendPath } from '../utils/projectRoot.js';
 
 const router = express.Router();
 
@@ -14,7 +15,7 @@ router.delete('/users/:userId', deleteUser);
 // Multer storage for profile images
 const storage = multer.diskStorage({
 	destination: (req, file, cb) => {
-		const uploadDir = path.join(process.cwd(), 'uploads', 'profile_images');
+		const uploadDir = resolveBackendPath('uploads', 'profile_images');
 		if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 		cb(null, uploadDir);
 	},

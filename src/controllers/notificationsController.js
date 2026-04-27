@@ -1,5 +1,22 @@
 import pool from '../config/database.js';
 
+// Auto-cleanup old notifications (older than 30 days)
+const cleanupOldNotifications = async () => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM notifications 
+       WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY) 
+       AND is_read = TRUE`,
+      []
+    );
+    if (result && result[0] && result[0].affectedRows > 0) {
+      console.log(`🧹 Cleaned up ${result[0].affectedRows} old notifications (older than 30 days)`);
+    }
+  } catch (error) {
+    console.error('Error cleaning up old notifications:', error);
+  }
+};
+
 export const getUserNotifications = async (req, res) => {
   try {
     const userId = parseInt(req.params.userId, 10);
@@ -9,169 +26,63 @@ export const getUserNotifications = async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    const notifications = [];
+    // Run cleanup of old notifications (async, non-blocking)
+    cleanupOldNotifications().catch(err => console.error('Cleanup error:', err));
 
-    // 1. Fetch recent project updates for client's projects
+    // Fetch all notifications from the notifications table (within 30 days)
     try {
-      const [projectUpdates] = await pool.query(`
+      const [notifications] = await pool.query(`
         SELECT 
-          p.id, 
-          p.title,
-          p.updated_at,
-          'project_update' as type
-        FROM projects p
-        WHERE p.client_id = ? 
-        AND p.updated_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
-        ORDER BY p.updated_at DESC
-        LIMIT 3
+          n.id as notification_id,
+          n.id,
+          n.user_id,
+          n.type,
+          n.title,
+          n.message,
+          n.data,
+          n.is_read,
+          n.created_at,
+          ${pool.escapeId('is_read')} = FALSE as unread
+        FROM notifications n
+        WHERE n.user_id = ? 
+        AND n.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
+        ORDER BY n.is_read ASC, n.created_at DESC
+        LIMIT 50
       `, [userId]);
 
-      if (Array.isArray(projectUpdates)) {
-        projectUpdates.forEach(update => {
-          const timeAgo = getTimeAgo(update.updated_at);
-          notifications.push({
-            id: `project-${update.id}`,
-            title: 'Project Update',
-            message: `${update.title} was updated`,
-            time: timeAgo,
-            unread: true,
-            type: 'project_update',
-          });
-        });
-      }
-    } catch (e) {
-      console.error('Error fetching project updates:', e.message);
-    }
-
-    // 2. Fetch recent messages from developers
-    try {
-      const [messages] = await pool.query(`
-        SELECT DISTINCT
-          m.sender_id,
-          u.name as developer_name,
-          m.message,
-          m.created_at,
-          'new_message' as type
-        FROM messages m
-        JOIN users u ON u.id = m.sender_id
-        WHERE m.recipient_id = ? 
-        AND m.created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
-        AND u.role = 'developer'
-        ORDER BY m.created_at DESC
-        LIMIT 3
-      `, [userId]);
-
-      if (Array.isArray(messages)) {
-        messages.forEach(msg => {
-          const timeAgo = getTimeAgo(msg.created_at);
-          notifications.push({
-            id: `message-${msg.sender_id}`,
-            title: 'New Message',
-            message: `${msg.developer_name} sent you a message`,
-            time: timeAgo,
-            unread: true,
-            type: 'new_message',
-          });
-        });
-      }
-    } catch (e) {
-      console.error('Error fetching messages:', e.message);
-    }
-
-    // 3. Fetch upcoming payment milestones
-    try {
-      const [milestones] = await pool.query(`
-        SELECT 
-          m.id,
-          m.amount,
-          m.status,
-          p.title as project_title,
-          m.due_date,
-          'payment_due' as type
-        FROM milestones m
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.client_id = ? 
-        AND m.status IN ('pending', 'due')
-        AND m.due_date <= DATE_ADD(NOW(), INTERVAL 7 DAY)
-        ORDER BY m.due_date ASC
-        LIMIT 3
-      `, [userId]);
-
-      if (Array.isArray(milestones)) {
-        milestones.forEach(milestone => {
-          const timeAgo = getTimeAgo(milestone.due_date);
-          notifications.push({
-            id: `milestone-${milestone.id}`,
-            title: 'Payment Reminder',
-            message: `Payment of ₦${milestone.amount} due for ${milestone.project_title}`,
-            time: timeAgo,
-            unread: true,
-            type: 'payment_due',
-          });
-        });
-      }
-    } catch (e) {
-      console.error('Error fetching milestones:', e.message);
-    }
-
-    // 4. Fetch document verification status changes
-    try {
-      const [docUpdates] = await pool.query(`
-        SELECT 
-          ud.id,
-          ud.type,
-          ud.verified,
-          ud.decline_reason,
-          ud.created_at,
-          'document_status' as type
-        FROM user_documents ud
-        WHERE ud.user_id = ? 
-        AND ud.created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
-        ORDER BY ud.created_at DESC
-        LIMIT 3
-      `, [userId]);
-
-      if (Array.isArray(docUpdates)) {
-        docUpdates.forEach(doc => {
-          const timeAgo = getTimeAgo(doc.created_at);
-          let title = 'Document Status';
-          let message = '';
-          
-          if (doc.verified === 1) {
-            message = `Your ${doc.type} document was approved`;
-            title = 'Document Approved';
-          } else if (doc.verified === 2) {
-            message = `Your ${doc.type} document was declined: ${doc.decline_reason}`;
-            title = 'Document Declined';
+      // Format notifications
+      const formattedNotifications = notifications.map(notif => {
+        let parsedData = {};
+        try {
+          if (notif.data) {
+            parsedData = JSON.parse(notif.data);
           }
-          
-          if (message) {
-            notifications.push({
-              id: `doc-${doc.id}`,
-              title,
-              message,
-              time: timeAgo,
-              unread: true,
-              type: 'document_status',
-            });
-          }
-        });
-      }
+        } catch (e) {
+          console.warn('Failed to parse notification data:', notif.data);
+        }
+
+        return {
+          id: notif.id,
+          notification_id: notif.notification_id,
+          type: notif.type,
+          title: notif.title,
+          message: notif.message,
+          data: parsedData,
+          is_read: notif.is_read,
+          unread: notif.unread,
+          time: getTimeAgo(notif.created_at),
+          created_at: notif.created_at
+        };
+      });
+
+      res.json({ 
+        notifications: formattedNotifications,
+        total: formattedNotifications.length 
+      });
     } catch (e) {
-      console.error('Error fetching document updates:', e.message);
+      console.error('Error fetching notifications from database:', e.message);
+      res.status(500).json({ error: 'Failed to fetch notifications' });
     }
-
-    // Sort by unread first, then by time
-    notifications.sort((a, b) => {
-      if (a.unread !== b.unread) return b.unread - a.unread;
-      return 0;
-    });
-
-    // Return top 10 notifications
-    res.json({ 
-      notifications: notifications.slice(0, 10),
-      total: notifications.length 
-    });
   } catch (error) {
     console.error('Get notifications error:', error);
     res.status(500).json({ error: 'Failed to fetch notifications' });
@@ -225,6 +136,116 @@ export const getRecentMessages = async (req, res) => {
   } catch (error) {
     console.error('Get recent messages error:', error);
     res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+};
+
+// Mark a notification as read
+export const markNotificationAsRead = async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+    const userId = req.user.userId;
+
+    // Verify that the notification belongs to the user
+    const [notification] = await pool.query(
+      'SELECT id, user_id FROM notifications WHERE id = ?',
+      [notificationId]
+    );
+
+    if (notification.length === 0) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    if (notification[0].user_id !== userId) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Mark as read
+    await pool.query(
+      'UPDATE notifications SET is_read = TRUE WHERE id = ?',
+      [notificationId]
+    );
+
+    console.log(`✅ Notification ${notificationId} marked as read`);
+    res.json({ message: 'Notification marked as read' });
+  } catch (error) {
+    console.error('Mark notification as read error:', error);
+    res.status(500).json({ error: 'Failed to mark notification as read' });
+  }
+};
+
+// Delete a notification
+export const deleteNotification = async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+    const userId = req.user.userId;
+
+    // Verify that the notification belongs to the user
+    const [notification] = await pool.query(
+      'SELECT id, user_id FROM notifications WHERE id = ?',
+      [notificationId]
+    );
+
+    if (notification.length === 0) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    if (notification[0].user_id !== userId) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Delete notification
+    await pool.query(
+      'DELETE FROM notifications WHERE id = ?',
+      [notificationId]
+    );
+
+    console.log(`🗑️ Notification ${notificationId} deleted`);
+    res.json({ message: 'Notification deleted' });
+  } catch (error) {
+    console.error('Delete notification error:', error);
+    res.status(500).json({ error: 'Failed to delete notification' });
+  }
+};
+
+// Export cleanup function for external use (scheduled tasks, etc.)
+export const cleanupExpiredNotifications = async (req, res) => {
+  try {
+    await cleanupOldNotifications();
+    res.json({ message: 'Notification cleanup completed' });
+  } catch (error) {
+    console.error('Cleanup error:', error);
+    res.status(500).json({ error: 'Failed to cleanup notifications' });
+  }
+};
+
+// Helper function: Create a notification
+export const createNotification = async (userId, type, title, message, data = null) => {
+  try {
+    const result = await pool.query(
+      `INSERT INTO notifications (user_id, type, title, message, data, is_read, created_at) 
+       VALUES (?, ?, ?, ?, ?, FALSE, NOW())`,
+      [userId, type, title, message, data ? JSON.stringify(data) : null]
+    );
+    return result[0];
+  } catch (error) {
+    console.error('Error creating notification:', error);
+    throw error;
+  }
+};
+
+// Helper function: Delete old notifications manually
+export const deleteOldNotifications = async () => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM notifications 
+       WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+      []
+    );
+    console.log(`🧹 Deleted ${result[0].affectedRows} notifications older than 30 days`);
+    return result[0];
+  } catch (error) {
+    console.error('Error deleting old notifications:', error);
+    throw error;
   }
 };
 

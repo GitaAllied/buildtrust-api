@@ -1,4 +1,6 @@
 import { ZodError } from 'zod';
+import path from 'path';
+import { resolveBackendPath } from '../utils/projectRoot.js';
 
 export const validate = (schema) => {
   return async (req, res, next) => {
@@ -19,7 +21,7 @@ export const validate = (schema) => {
             } else if (req.file.destination && req.file.filename) {
               filePath = path.join(req.file.destination, req.file.filename);
             } else if (req.file.filename) {
-              filePath = path.join(process.cwd(), 'uploads', req.file.filename);
+              filePath = path.join(resolveBackendPath('uploads'), req.file.filename);
             }
             if (filePath) fs.unlinkSync(filePath);
           } catch (e) {

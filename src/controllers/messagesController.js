@@ -1,30 +1,67 @@
 import pool from '../config/database.js';
 
+export const getUnreadMessageCount = async (req, res) => {
+  const userId = req.user?.userId;
+  try {
+    if (!userId) return res.status(401).json({ error: 'Authentication required' });
+
+    // Count conversations that have unread messages sent by others to this user
+    const [rows] = await pool.query(`
+      SELECT COUNT(DISTINCT c.id) as unread_conversations
+      FROM conversations c
+      JOIN messages m ON m.conversation_id = c.id
+      WHERE (c.participant1_id = ? OR c.participant2_id = ?)
+      AND m.sender_id != ?
+      AND m.is_read = 0
+    `, [userId, userId, userId]);
+
+    const unreadCount = rows[0]?.unread_conversations || 0;
+    res.json({ unread_count: unreadCount });
+  } catch (error) {
+    console.error('Error fetching unread count:', error);
+    res.status(500).json({ error: 'Failed to fetch unread count' });
+  }
+};
+
 export const getConversations = async (req, res) => {
   const userId = req.user?.userId;
   try {
+    // If user is admin, allow listing all conversations with user details
+    if (req.user && req.user.role === 'admin') {
+      const adminId = req.user.userId;
+      const [rows] = await pool.query(`
+        SELECT c.id AS conversation_id, 
+               c.participant1_id, 
+               c.participant2_id,
+               CASE WHEN c.participant1_id = ? THEN c.participant2_id ELSE c.participant1_id END AS other_id,
+               u.name AS other_name,
+               u.email AS other_email,
+               u.role AS other_role,
+               u.profile_image AS other_avatar,
+               c.last_message_at,
+               c.status,
+               (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_content
+        FROM conversations c
+        LEFT JOIN users u ON u.id = (CASE WHEN c.participant1_id = ? THEN c.participant2_id ELSE c.participant1_id END)
+        ORDER BY c.last_message_at DESC
+      `, [adminId, adminId]);
+      return res.json(rows);
+    }
+
     // Return conversations where user participates (admin can view all if role=admin)
     let params = [userId, userId];
     const query = `
       SELECT c.id AS conversation_id,
         CASE WHEN c.participant1_id = ? THEN c.participant2_id ELSE c.participant1_id END AS other_id,
         u.name AS other_name, u.email AS other_email, u.role AS other_role, u.profile_image AS other_avatar,
-        c.last_message_at
+        c.last_message_at,
+        c.status,
+        (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_content
       FROM conversations c
       JOIN users u ON u.id = (CASE WHEN c.participant1_id = ? THEN c.participant2_id ELSE c.participant1_id END)
       WHERE c.participant1_id = ? OR c.participant2_id = ?
       ORDER BY c.last_message_at DESC
     `;
-
-    // If user is admin, allow listing all conversations
-    if (req.user && req.user.role === 'admin') {
-      const [rows] = await pool.query(`
-        SELECT c.id AS conversation_id, c.participant1_id, c.participant2_id, c.last_message_at
-        FROM conversations c
-        ORDER BY c.last_message_at DESC
-      `);
-      return res.json(rows);
-    }
 
     const [rows] = await pool.query(query, [...params, ...params]);
     res.json(rows);
@@ -217,4 +254,38 @@ export const markConversationRead = async (req, res) => {
   }
 };
 
-export default { getConversations, getMessagesForConversation, postMessage, setTypingStatus, getTypingStatus };
+export const archiveConversation = async (req, res) => {
+  const { conversationId } = req.params;
+  const userId = req.user?.userId;
+  const { status } = req.body;
+
+  if (!userId) return res.status(401).json({ error: 'Authentication required' });
+  if (!status || !['active', 'archived'].includes(status)) {
+    return res.status(400).json({ error: 'Status must be "active" or "archived"' });
+  }
+
+  try {
+    // Verify user is a participant in this conversation
+    const [convCheck] = await pool.query(
+      'SELECT id FROM conversations WHERE id = ? AND (participant1_id = ? OR participant2_id = ?) LIMIT 1',
+      [conversationId, userId, userId]
+    );
+
+    if (!Array.isArray(convCheck) || convCheck.length === 0) {
+      return res.status(403).json({ error: 'Not authorized to modify this conversation' });
+    }
+
+    // Update conversation status
+    await pool.query(
+      'UPDATE conversations SET status = ? WHERE id = ?',
+      [status, conversationId]
+    );
+
+    return res.json({ success: true, status });
+  } catch (err) {
+    console.error('Error archiving conversation:', err);
+    return res.status(500).json({ error: 'Failed to archive conversation' });
+  }
+};
+
+export default { getConversations, getMessagesForConversation, postMessage, setTypingStatus, getTypingStatus, markConversationRead, archiveConversation };

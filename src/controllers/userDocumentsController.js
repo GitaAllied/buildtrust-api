@@ -2,46 +2,86 @@ import fs from 'fs';
 import path from 'path';
 import pool from '../config/database.js';
 import cloudinaryModule from 'cloudinary';
+import { resolveBackendPath } from '../utils/projectRoot.js';
 
 const cloudinary = cloudinaryModule.v2;
 
-// Log Cloudinary configuration status
-console.log('🔍 CLOUDINARY CONFIG CHECK:', {
-  hasCloudName: !!process.env.CLOUDINARY_CLOUD_NAME,
-  hasApiKey: !!process.env.CLOUDINARY_API_KEY,
-  hasApiSecret: !!process.env.CLOUDINARY_API_SECRET,
-  cloudName: process.env.CLOUDINARY_CLOUD_NAME || 'NOT SET',
-});
-
+// Configure Cloudinary if credentials available
 if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
   });
-  console.log('✅ CLOUDINARY INITIALIZED WITH CONFIG');
-} else {
-  console.warn('⚠️ CLOUDINARY CREDENTIALS NOT FULLY SET - will use local storage');
 }
 
+/**
+ * Helper function to ensure upload directories exist
+ */
+const ensureUploadDirExists = (dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+};
+
+/**
+ * Helper function to save a document file and return the filename
+ * Handles multer file objects by moving from temp to final location
+ */
+const saveDocumentFile = (file) => {
+  const uploadsDir = resolveBackendPath('uploads', 'documents');
+  ensureUploadDirExists(uploadsDir);
+  
+  // Generate unique filename
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const filename = `${uniqueSuffix}-${file.originalname}`;
+  const filepath = path.join(uploadsDir, filename);
+  
+  // Move file from temp location to final location
+  try {
+    fs.renameSync(file.path, filepath);
+  } catch (err) {
+    // If rename fails, try copy then delete
+    fs.copyFileSync(file.path, filepath);
+    fs.unlinkSync(file.path);
+  }
+  
+  return filename;
+};
+
 export const uploadDocument = async (req, res) => {
+  console.log('📤 UPLOAD DOCUMENT REQUEST:', {
+    params: req.params,
+    body: req.body,
+    file: req.file ? { originalname: req.file.originalname, size: req.file.size } : null,
+    user: req.user,
+    headers: req.headers
+  });
+
   try {
     const userId = parseInt(req.params.id, 10);
     // Ensure authenticated user is uploading their own documents
     if (!req.user || req.user.userId !== userId) {
+      console.log('❌ UNAUTHORIZED:', { reqUserId: req.user?.userId, paramId: userId });
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
     const file = req.file;
     const { type } = req.body;
 
-    const allowedTypes = ['license', 'certification', 'testimonial', 'identity'];
+    console.log('📄 FILE INFO:', { file, type, body: req.body });
 
-    if (!file) return res.status(400).json({ error: 'File is required' });
+    const allowedTypes = ['license', 'certification', 'testimonial', 'identity', 'id', 'cac', 'selfie', 'passport', 'idCard'];
+
+    if (!file) {
+      console.log('❌ NO FILE RECEIVED');
+      return res.status(400).json({ error: 'File is required' });
+    }
     if (!type) {
+      console.log('❌ NO TYPE RECEIVED');
       // remove uploaded file if present
       try {
-        const filePath = file && file.destination ? path.join(file.destination, file.filename) : path.join(process.cwd(), 'uploads', file.filename);
+        const filePath = file && file.destination ? path.join(file.destination, file.filename) : resolveBackendPath('uploads', file.filename);
         fs.unlinkSync(filePath);
       } catch (e) {}
       return res.status(400).json({ error: 'Document type is required' });
@@ -49,22 +89,25 @@ export const uploadDocument = async (req, res) => {
     if (!allowedTypes.includes(type)) {
       // remove uploaded file if present
       try {
-        const filePath = file && file.destination ? path.join(file.destination, file.filename) : path.join(process.cwd(), 'uploads', file.filename);
+        const filePath = file && file.destination ? path.join(file.destination, file.filename) : resolveBackendPath('uploads', file.filename);
         fs.unlinkSync(filePath);
       } catch (e) {}
       return res.status(400).json({ error: 'Invalid document type' });
     }
 
     const uploadsBase = process.env.BACKEND_URL ? `${process.env.BACKEND_URL}/uploads` : `${req.protocol}://${req.get('host')}/uploads`;
-    let url = `${uploadsBase}/${type}/${file.filename}`;
+    
+    // Save the file using the helper function
+    const filename = saveDocumentFile(file);
+    let url = `${uploadsBase}/documents/${filename}`;
 
     // If Cloudinary is configured, upload the saved local file to Cloudinary and use its secure URL.
-    const localFilePath = file && file.destination ? path.join(file.destination, file.filename) : path.join(process.cwd(), 'uploads', type, file.filename);
+    const localFilePath = resolveBackendPath('uploads', 'documents', filename);
     
     console.log('📤 DOCUMENT UPLOAD INITIATED:', {
       userId,
       type,
-      filename: file.filename,
+      filename,
       localFilePath,
       cloudinaryConfigured: !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET),
     });
@@ -110,7 +153,7 @@ export const uploadDocument = async (req, res) => {
         const existing = existingRows[0];
         // remove old file from disk if present
         try {
-          const oldPath = path.join(process.cwd(), 'uploads', existing.type || '', existing.filename);
+          const oldPath = resolveBackendPath('uploads', 'documents', existing.filename);
           if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
         } catch (e) {
           console.warn('Failed to remove old declined file from disk:', e.message);
@@ -134,20 +177,20 @@ export const uploadDocument = async (req, res) => {
         // update existing DB row to new file and mark unverified
         await pool.query(
           'UPDATE user_documents SET filename = ?, url = ?, size = ?, metadata = ?, verified = 0, decline_reason = NULL WHERE id = ?',
-          [file.filename, url, file.size, metadata, existing.id]
+          [filename, url, file.size, metadata, existing.id]
         );
 
         // return updated document
-        res.status(200).json({ id: existing.id, user_id: userId, type, filename: file.filename, url, size: file.size, metadata: JSON.parse(metadata), verified: 0, replaced: true });
+        res.status(200).json({ id: existing.id, user_id: userId, type, filename, url, size: file.size, metadata: JSON.parse(metadata), verified: 0, replaced: true });
         return;
       }
 
       const [result] = await pool.query(
         'INSERT INTO user_documents (user_id, type, filename, url, size, metadata, verified) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [userId, type, file.filename, url, file.size, metadata, 0]
+        [userId, type, filename, url, file.size, metadata, 0]
       );
 
-      res.status(201).json({ id: result.insertId, user_id: userId, type, filename: file.filename, url, size: file.size, metadata: JSON.parse(metadata), verified: 0 });
+      res.status(201).json({ id: result.insertId, user_id: userId, type, filename, url, size: file.size, metadata: JSON.parse(metadata), verified: 0 });
   } catch (error) {
 
     res.status(500).json({ error: 'An error occurred while uploading document' });
@@ -193,7 +236,7 @@ export const deleteDocument = async (req, res) => {
     const filename = rows[0].filename;
     const ownerId = rows[0].user_id;
     const docType = rows[0].type;
-    const filePath = path.join(process.cwd(), 'uploads', docType || '', filename);
+    const filePath = resolveBackendPath('uploads', 'documents', filename);
 
     // Delete DB row
     await pool.query('DELETE FROM user_documents WHERE id = ?', [docId]);

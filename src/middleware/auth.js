@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
+import pool from '../config/database.js';
 
-export const authenticateToken = (req, res, next) => {
+export const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -9,11 +10,20 @@ export const authenticateToken = (req, res, next) => {
   }
 
   const secret = process.env.JWT_SECRET || 'your_secret_key';
-  jwt.verify(token, secret, (err, user) => {
+  jwt.verify(token, secret, async (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid token' });
     }
     req.user = user;
+    
+    // Update last_seen for online status tracking
+    try {
+      await pool.query('UPDATE users SET last_seen = NOW() WHERE id = ?', [user.id]);
+    } catch (updateErr) {
+      // Don't fail the request if update fails, just log
+      console.warn('Failed to update last_seen:', updateErr);
+    }
+    
     next();
   });
 };

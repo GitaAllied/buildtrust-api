@@ -20,7 +20,7 @@ export const updateProfileSchema = z.object({
 });
 
 export const uploadDocumentSchema = z.object({
-  type: z.enum(['identity', 'license', 'certification', 'testimonial']),
+  type: z.enum(['identity', 'license', 'certification', 'testimonial', 'id', 'cac', 'selfie', 'passport', 'idCard']),
 });
 
 export const changePasswordSchema = z.object({
@@ -33,4 +33,8 @@ export const changePasswordSchema = z.object({
 }).refine((data) => data.newPassword === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
+});
+
+export const developerIdSchema = z.object({
+  developer_id: z.number().int().positive('Developer ID must be a positive integer'),
 });

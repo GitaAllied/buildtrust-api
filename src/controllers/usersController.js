@@ -2,7 +2,9 @@ import pool from '../config/database.js';
 
 export const getUsers = async (req, res) => {
   try {
-    const [results] = await pool.query('SELECT id, email, name, role, email_verified, setup_completed, documents_verified, created_at, phone, location, current_state, current_country, ip_address, is_active, bio, website, last_login, profile_image FROM users');
+    const [results] = await pool.query('SELECT id, email, name, role, email_verified, setup_completed, documents_verified, created_at, phone, location, current_state, current_country, ip_address, is_active, bio, website, last_login, is_online, last_seen, session_active, profile_image FROM users');
+    
+    // Return users with their actual online status from database
     res.json(results);
   } catch (error) {
     res.status(500).json({ error: 'An error occurred while fetching users' });
