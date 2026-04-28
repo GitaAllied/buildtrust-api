@@ -154,7 +154,7 @@ export const getAllProjects = async (req, res) => {
     const [projects] = await pool.query(
       `SELECT 
         p.id, p.client_id, p.developer_id, p.title, p.type, p.location, 
-        p.budget, p.budget_min, p.budget_max, p.description, p.status, p.acceptance_status,
+        p.budget, p.budget_min, p.budget_max, p.description, p.status,
         p.created_at, p.updated_at,
         uc.name as client_name,
         ud.name as developer_name,
@@ -442,12 +442,31 @@ export const signContract = async (req, res) => {
     updateValues.push(contract.id);
     await pool.query(query, updateValues);
 
+    // Check if both parties have now signed
+    const [updatedContractRows] = await pool.query(
+      'SELECT developer_signature_url, developer_signed_at, client_signature_url, client_signed_at FROM contracts WHERE id = ?',
+      [contract.id]
+    );
+    
+    const updatedContract = updatedContractRows[0];
+    const bothSigned = updatedContract.developer_signature_url && updatedContract.developer_signed_at && 
+                       updatedContract.client_signature_url && updatedContract.client_signed_at;
+
+    if (bothSigned) {
+      // Both parties have signed, set needs_resign to 0
+      await pool.query(
+        'UPDATE contracts SET needs_resign = 0 WHERE id = ?',
+        [contract.id]
+      );
+    }
+
     res.json({
       message: 'Contract signature saved successfully',
       contractId: contract.id,
       signatureUrl,
       userRole,
-      status: contract.status
+      status: contract.status,
+      bothSigned: bothSigned
     });
   } catch (error) {
     if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
@@ -1751,7 +1770,6 @@ export const getAllContracts = async (req, res) => {
         c.id,
         c.project_id,
         c.status,
-        c.contract_terms,
         c.needs_resign,
         c.developer_signature_url,
         c.client_signature_url,
@@ -1765,8 +1783,6 @@ export const getAllContracts = async (req, res) => {
         p.budget,
         p.client_id,
         p.developer_id,
-        p.assigned_at,
-        p.acceptance_status,
         u.name AS developer_name,
         u.profile_image AS developer_profile_image
        FROM contracts c

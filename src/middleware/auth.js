@@ -16,12 +16,11 @@ export const authenticateToken = async (req, res, next) => {
     }
     req.user = user;
     
-    // Update last_seen for online status tracking
-    try {
-      await pool.query('UPDATE users SET last_seen = NOW() WHERE id = ?', [user.id]);
-    } catch (updateErr) {
-      // Don't fail the request if update fails, just log
-      console.warn('Failed to update last_seen:', updateErr);
+    // Update last_seen for online status tracking (non-critical)
+    if (user.id) {
+      pool.query('UPDATE users SET last_seen = NOW() WHERE id = ?', [user.id]).catch(() => {
+        // Silently ignore last_seen update failures - not critical for auth
+      });
     }
     
     next();
