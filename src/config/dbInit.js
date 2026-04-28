@@ -35,11 +35,17 @@ export async function initializeDatabase() {
     // Allow name to be optional (nullable)
     await pool.query("ALTER TABLE users MODIFY COLUMN name VARCHAR(255) NULL");
 
-    // Add online status tracking columns (idempotent)
-    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT FALSE AFTER last_login");
-    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP NULL AFTER is_online");
-    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_active BOOLEAN DEFAULT FALSE AFTER last_seen");
-    await pool.query("ALTER TABLE users ADD INDEX IF NOT EXISTS idx_is_online (is_online)");
+    // Add online status tracking columns (use compatible syntax for older MySQL)
+    try {
+      await pool.query("ALTER TABLE users ADD COLUMN is_online BOOLEAN DEFAULT FALSE");
+    } catch (err) {
+      // Column already exists
+    }
+    try {
+      await pool.query("ALTER TABLE users ADD COLUMN session_active BOOLEAN DEFAULT FALSE");
+    } catch (err) {
+      // Column already exists
+    }
 
     // Create sessions table for token management
     await pool.query(`
