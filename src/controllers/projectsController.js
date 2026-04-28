@@ -159,6 +159,8 @@ export const getAllProjects = async (req, res) => {
         uc.name as client_name,
         ud.name as developer_name,
         c.id as contract_id,
+        c.developer_signed_at,
+        c.client_signed_at,
         a.status as application_status
       FROM projects p
       LEFT JOIN users uc ON p.client_id = uc.id
@@ -260,7 +262,7 @@ export const getProjectById = async (req, res) => {
     const [projects] = await pool.query(
       `SELECT id, client_id, developer_id, title, description, message, location, building_type, 
               budget, budget_min, budget_max, start_date, duration, 
-              status, created_at, updated_at 
+              status, acceptance_status, assigned_at, created_at, updated_at 
        FROM projects WHERE id = ?`,
       [projectId]
     );
@@ -301,7 +303,7 @@ export const getProjectById = async (req, res) => {
 
     // Enrich with contract details if one exists
     const [contracts] = await pool.query(
-      `SELECT id, status, developer_signature_url, client_signature_url, needs_resign
+      `SELECT id, status, developer_signature_url, client_signature_url, developer_signed_at, client_signed_at, contract_terms, needs_resign
        FROM contracts WHERE project_id = ? AND is_template = FALSE LIMIT 1`,
       [projectId]
     );
@@ -309,6 +311,11 @@ export const getProjectById = async (req, res) => {
 
     // Calculate hours remaining if pending
     let hours_remaining = null;
+    if (project.acceptance_status === 'pending' && project.assigned_at) {
+      const deadline = new Date(project.assigned_at).getTime() + 72 * 60 * 60 * 1000;
+      const now = new Date().getTime();
+      hours_remaining = Math.max(0, Math.ceil((deadline - now) / (60 * 60 * 1000)));
+    }
 
     // Fetch project media (first image)
     // Include records with mime_type LIKE 'image/%' OR where mime_type is NULL (old records)
@@ -424,10 +431,10 @@ export const signContract = async (req, res) => {
     const updateFields = [];
     const updateValues = [];
     if (userRole === 'developer') {
-      updateFields.push('developer_signature_url = ?');
+      updateFields.push('developer_signature_url = ?', 'developer_signed_at = NOW()');
       updateValues.push(signatureUrl);
     } else {
-      updateFields.push('client_signature_url = ?');
+      updateFields.push('client_signature_url = ?', 'client_signed_at = NOW()');
       updateValues.push(signatureUrl);
     }
 
@@ -437,12 +444,13 @@ export const signContract = async (req, res) => {
 
     // Check if both parties have now signed
     const [updatedContractRows] = await pool.query(
-      'SELECT developer_signature_url, client_signature_url FROM contracts WHERE id = ?',
+      'SELECT developer_signature_url, developer_signed_at, client_signature_url, client_signed_at FROM contracts WHERE id = ?',
       [contract.id]
     );
     
     const updatedContract = updatedContractRows[0];
-    const bothSigned = updatedContract.developer_signature_url && updatedContract.client_signature_url;
+    const bothSigned = updatedContract.developer_signature_url && updatedContract.developer_signed_at && 
+                       updatedContract.client_signature_url && updatedContract.client_signed_at;
 
     if (bothSigned) {
       // Both parties have signed, set needs_resign to 0
@@ -779,7 +787,9 @@ export const assignDeveloperToProject = async (req, res) => {
     // Assign developer: set developer_id, assigned_at (NOW), and acceptance_status = 'pending'
     await pool.query(
       `UPDATE projects 
-       SET developer_id = ?,
+       SET developer_id = ?, 
+           assigned_at = NOW(), 
+           acceptance_status = 'pending',
            updated_at = CURRENT_TIMESTAMP 
        WHERE id = ?`,
       [developer_id, projectId]
@@ -788,10 +798,11 @@ export const assignDeveloperToProject = async (req, res) => {
     // Ensure contract exists with project details
     await ensureContractExists(projectId, project);
 
-    console.log(`✅ Developer ${developer_id} assigned to project ${projectId}`);
+    console.log(`✅ Developer ${developer_id} assigned to project ${projectId} - 72h acceptance window started`);
 
     res.json({ 
-      message: 'Developer assigned to project successfully'
+      message: 'Developer assigned to project successfully',
+      acceptance_deadline: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString()
     });
   } catch (error) {
     console.error('Error assigning developer:', error);
@@ -856,7 +867,10 @@ export const getDeveloperProjects = async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
     const developerId = decoded.userId || decoded.id;
 
-    // Fetch projects assigned to this developer
+    // Fetch projects assigned to this developer that are still in acceptance window or already accepted
+    // Query logic:
+    // 1. acceptance_status = 'accepted' (developer already accepted)
+    // 2. OR acceptance_status = 'pending' AND assigned_at > NOW() - 72 HOURS (still in 72-hour window)
     const [projects] = await pool.query(
       `SELECT 
         id, 
@@ -871,11 +885,17 @@ export const getDeveloperProjects = async (req, res) => {
         start_date, 
         duration, 
         status,
+        acceptance_status,
+        assigned_at,
         created_at, 
         updated_at 
        FROM projects 
-       WHERE developer_id = ?
-       ORDER BY created_at DESC`,
+       WHERE developer_id = ? 
+         AND (
+           acceptance_status = 'accepted'
+           OR (acceptance_status = 'pending' AND assigned_at > DATE_SUB(NOW(), INTERVAL 72 HOUR))
+         )
+       ORDER BY assigned_at DESC, created_at DESC`,
       [developerId]
     );
 
@@ -895,9 +915,25 @@ export const getDeveloperProjects = async (req, res) => {
           [project.id]
         );
         
+        // Calculate time remaining for acceptance (if pending)
+        let acceptance_deadline = null;
+        let hours_remaining = null;
+        
+        if (project.acceptance_status === 'pending' && project.assigned_at) {
+          acceptance_deadline = new Date(
+            new Date(project.assigned_at).getTime() + 72 * 60 * 60 * 1000
+          ).toISOString();
+          
+          const now = Date.now();
+          const deadline = new Date(project.assigned_at).getTime() + 72 * 60 * 60 * 1000;
+          hours_remaining = Math.max(0, Math.ceil((deadline - now) / (60 * 60 * 1000)));
+        }
+        
         return {
           ...project,
           client: clientData[0] || { id: project.client_id, name: 'Unknown Client' },
+          acceptance_deadline,
+          hours_remaining,
           media_array: Array.isArray(media) ? media : [] // All images for rotation
         };
       })
@@ -1010,9 +1046,12 @@ export const getProjectContract = async (req, res) => {
         project_id, 
         developer_id,
         status, 
+        contract_terms,
         needs_resign,
         developer_signature_url, 
-        client_signature_url,
+        client_signature_url, 
+        developer_signed_at, 
+        client_signed_at,
         created_at,
         updated_at
        FROM contracts 
@@ -1034,8 +1073,9 @@ export const getProjectContract = async (req, res) => {
     // Build documents array from contract signatures
     const documents = [];
     
-    // Check if both parties have signed (by checking signature URLs)
-    const bothSigned = contract.developer_signature_url && contract.client_signature_url;
+    // Check if both parties have signed
+    const bothSigned = contract.developer_signature_url && contract.developer_signed_at && 
+                       contract.client_signature_url && contract.client_signed_at;
 
     // If both parties have signed, add a combined contract document
     if (bothSigned) {
@@ -1050,7 +1090,10 @@ export const getProjectContract = async (req, res) => {
         is_complete: true,
         developer_signature_url: contract.developer_signature_url,
         client_signature_url: contract.client_signature_url,
-        created_at: contract.created_at
+        developer_signed_at: contract.developer_signed_at,
+        client_signed_at: contract.client_signed_at,
+        signed_at: new Date(Math.max(new Date(contract.developer_signed_at).getTime(), new Date(contract.client_signed_at).getTime())),
+        created_at: new Date(Math.max(new Date(contract.developer_signed_at).getTime(), new Date(contract.client_signed_at).getTime()))
       });
     }
     
@@ -1064,7 +1107,8 @@ export const getProjectContract = async (req, res) => {
         filename: `developer-signature.png`,
         mime_type: 'image/png',
         signed_by: 'Developer',
-        created_at: contract.created_at
+        signed_at: contract.developer_signed_at,
+        created_at: contract.developer_signed_at
       });
     }
 
@@ -1077,7 +1121,8 @@ export const getProjectContract = async (req, res) => {
         filename: `client-signature.png`,
         mime_type: 'image/png',
         signed_by: 'Client',
-        created_at: contract.created_at
+        signed_at: contract.client_signed_at,
+        created_at: contract.client_signed_at
       });
     }
 
@@ -1174,9 +1219,12 @@ export const updateProjectContract = async (req, res) => {
         project_id, 
         developer_id,
         status, 
+        contract_terms,
         needs_resign,
         developer_signature_url, 
-        client_signature_url,
+        client_signature_url, 
+        developer_signed_at, 
+        client_signed_at,
         created_at,
         updated_at
        FROM contracts 
@@ -1466,12 +1514,96 @@ export const rejectProjectAssignment = async (req, res) => {
 export const expireProjectAcceptances = async () => {
   try {
     console.log('🔄 [Scheduled Job] Starting project acceptance expiry check...');
-    // Note: acceptance_status and assigned_at columns don't exist in production database
-    // This function is disabled until database schema is updated
-    console.log('ℹ️ Project acceptance expiry check skipped (columns not in schema)');
-    return;
+    const startTime = Date.now();
+
+    // Find all pending projects where 72 hours have passed since assignment
+    const [expiredProjects] = await pool.query(
+      `SELECT id, developer_id, title, assigned_at, client_id FROM projects 
+       WHERE acceptance_status = 'pending' 
+         AND assigned_at IS NOT NULL
+         AND assigned_at < DATE_SUB(NOW(), INTERVAL 72 HOUR)
+       ORDER BY assigned_at ASC`
+    );
+
+    console.log(`📋 Found ${expiredProjects.length} expired project(s) pending acceptance`);
+
+    if (expiredProjects.length === 0) {
+      console.log('✓ No expired project acceptances found');
+      return { expiredCount: 0, projects: [] };
+    }
+
+    // Log projects that will be expired
+    expiredProjects.forEach(project => {
+      const hoursExpired = Math.round((Date.now() - new Date(project.assigned_at).getTime()) / (1000 * 60 * 60));
+      console.log(`   📌 Project ${project.id} (${project.title}) - Assigned ${hoursExpired} hours ago`);
+    });
+
+    // Set acceptance_status to 'expired' for projects that exceeded 72-hour window
+    // Keep assigned_at and developer_id for audit trail
+    const [result] = await pool.query(
+      `UPDATE projects 
+       SET acceptance_status = 'expired',
+           updated_at = CURRENT_TIMESTAMP 
+       WHERE acceptance_status = 'pending' 
+         AND assigned_at IS NOT NULL
+         AND assigned_at < DATE_SUB(NOW(), INTERVAL 72 HOUR)`
+    );
+
+    console.log(`⏰ Updated ${result.affectedRows} project(s) to 'expired' status`);
+
+    // Create notifications for each expired project
+    for (const project of expiredProjects) {
+      try {
+        // Get client name for better notification context
+        const [clientData] = await pool.query(
+          'SELECT name FROM users WHERE id = ?',
+          [project.client_id]
+        );
+        const clientName = clientData[0]?.name || 'Unknown Client';
+
+        // Create notification for the developer
+        await createNotification(
+          project.developer_id,
+          'project_expired',
+          '⏰ Project Request Expired',
+          `You did not respond to the project request "${project.title}" from ${clientName} within 72 hours. The request has expired and will be reassigned.`,
+          {
+            project_id: project.id,
+            project_title: project.title,
+            client_name: clientName,
+            assigned_at: project.assigned_at,
+            reason: 'acceptance_timeout'
+          }
+        );
+
+        console.log(`   📬 Notification sent to Developer ${project.developer_id} for Project ${project.id}`);
+      } catch (notificationError) {
+        console.error(`   ⚠️ Failed to create notification for Developer ${project.developer_id}:`, notificationError.message);
+        // Continue processing other projects even if notification fails
+      }
+    }
+
+    // Verify the update
+    const [verifyProjects] = await pool.query(
+      `SELECT id, acceptance_status FROM projects WHERE id IN (?)`,
+      [expiredProjects.map(p => p.id)]
+    );
+
+    verifyProjects.forEach(project => {
+      console.log(`   ✓ Project ${project.id} - Status: ${project.acceptance_status}`);
+    });
+
+    const duration = Date.now() - startTime;
+    console.log(`✅ Project acceptance expiry check completed in ${duration}ms (${expiredProjects.length} projects expired, ${expiredProjects.length} notifications sent)\n`);
+
+    return { 
+      expiredCount: result.affectedRows, 
+      projects: expiredProjects 
+    };
   } catch (error) {
     console.error('❌ Error in expireProjectAcceptances:', error.message);
+    console.error('   Stack:', error.stack);
+    throw error;
   }
 };
 
@@ -1641,6 +1773,8 @@ export const getAllContracts = async (req, res) => {
         c.needs_resign,
         c.developer_signature_url,
         c.client_signature_url,
+        c.developer_signed_at,
+        c.client_signed_at,
         c.created_at,
         c.updated_at,
         p.title AS project_title,
@@ -1695,9 +1829,12 @@ export const getContractById = async (req, res) => {
         c.id,
         c.project_id,
         c.status,
+        c.contract_terms,
         c.needs_resign,
         c.developer_signature_url,
         c.client_signature_url,
+        c.developer_signed_at,
+        c.client_signed_at,
         c.created_at,
         c.updated_at,
         p.title AS project_title,
@@ -1709,6 +1846,7 @@ export const getContractById = async (req, res) => {
         p.budget,
         p.client_id,
         p.developer_id,
+        p.assigned_at,
         u.name AS developer_name,
         u.profile_image AS developer_profile_image,
         uc.name AS client_name

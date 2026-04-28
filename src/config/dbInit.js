@@ -33,18 +33,31 @@ export async function initializeDatabase() {
     await pool.query("ALTER TABLE users MODIFY COLUMN role VARCHAR(255) NOT NULL DEFAULT 'client'");
 
     // Allow name to be optional (nullable)
-    await pool.query("ALTER TABLE users MODIFY COLUMN name VARCHAR(255) NULL");
-
-    // Add online status tracking columns (use compatible syntax for older MySQL)
     try {
-      await pool.query("ALTER TABLE users ADD COLUMN is_online BOOLEAN DEFAULT FALSE");
+      await pool.query("ALTER TABLE users MODIFY COLUMN name VARCHAR(255) NULL");
     } catch (err) {
-      // Column already exists
+      // Already nullable
     }
+
+    // Add online status tracking columns (safely handle compatibility)
+    const userColumnsToAdd = [
+      { name: 'is_online', def: 'BOOLEAN DEFAULT FALSE' },
+      { name: 'last_seen', def: 'TIMESTAMP NULL' },
+      { name: 'session_active', def: 'BOOLEAN DEFAULT FALSE' }
+    ];
+    
+    for (const col of userColumnsToAdd) {
+      try {
+        await pool.query(`ALTER TABLE users ADD COLUMN ${col.name} ${col.def}`);
+      } catch (err) {
+        // Column already exists
+      }
+    }
+    
     try {
-      await pool.query("ALTER TABLE users ADD COLUMN session_active BOOLEAN DEFAULT FALSE");
+      await pool.query("ALTER TABLE users ADD INDEX idx_is_online (is_online)");
     } catch (err) {
-      // Column already exists
+      // Index already exists
     }
 
     // Create sessions table for token management
@@ -138,6 +151,8 @@ export async function initializeDatabase() {
         location VARCHAR(255),
         is_remote BOOLEAN DEFAULT TRUE,
         attachments JSON,
+        assigned_at TIMESTAMP NULL,
+        acceptance_status VARCHAR(50) DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -150,6 +165,20 @@ export async function initializeDatabase() {
         FULLTEXT idx_title_description (title, description)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+    
+    // Ensure projects table has assigned_at and acceptance_status columns
+    const projectColumnsToAdd = [
+      { name: 'assigned_at', def: 'TIMESTAMP NULL' },
+      { name: 'acceptance_status', def: "VARCHAR(50) DEFAULT 'pending'" }
+    ];
+    
+    for (const col of projectColumnsToAdd) {
+      try {
+        await pool.query(`ALTER TABLE projects ADD COLUMN ${col.name} ${col.def}`);
+      } catch (err) {
+        // Column already exists
+      }
+    }
 
     // Create project_skills table
     await pool.query(`
@@ -211,22 +240,26 @@ export async function initializeDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
-    // Ensure contract_terms and needs_resign columns exist
-    const contractColumns = [
-      'contract_terms LONGTEXT',
-      'needs_resign BOOLEAN DEFAULT FALSE',
-      'is_template BOOLEAN DEFAULT FALSE'
+    // Ensure all required contract columns exist
+    const contractColumnsToAdd = [
+      { name: 'contract_terms', def: 'LONGTEXT' },
+      { name: 'needs_resign', def: 'BOOLEAN DEFAULT FALSE' },
+      { name: 'is_template', def: 'BOOLEAN DEFAULT FALSE' },
+      { name: 'developer_signed_at', def: 'TIMESTAMP NULL' },
+      { name: 'client_signed_at', def: 'TIMESTAMP NULL' },
+      { name: 'developer_signature_url', def: "VARCHAR(1000) DEFAULT NULL" },
+      { name: 'client_signature_url', def: "VARCHAR(1000) DEFAULT NULL" }
     ];
 
-    for (const column of contractColumns) {
+    for (const col of contractColumnsToAdd) {
       try {
-        await pool.query(`ALTER TABLE contracts ADD COLUMN ${column}`);
+        await pool.query(`ALTER TABLE contracts ADD COLUMN ${col.name} ${col.def}`);
       } catch (err) {
-        // Column already exists or other harmless error
+        // Column already exists - silently ignore
       }
     }
 
-    // Make project_id and developer_id nullable (safe to run multiple times)
+    // Make project_id nullable (safe to run multiple times)
     try {
       await pool.query(`ALTER TABLE contracts MODIFY COLUMN project_id INT NULL`);
     } catch (err) {
@@ -235,16 +268,16 @@ export async function initializeDatabase() {
 
     // Drop developer_id column from contracts (use projects.developer_id instead)
     try {
-      await pool.query(`ALTER TABLE contracts DROP COLUMN IF EXISTS developer_id`);
+      await pool.query(`ALTER TABLE contracts DROP COLUMN developer_id`);
     } catch (err) {
-      // Column doesn't exist or other harmless error
+      // Column doesn't exist
     }
 
     // Drop application_id column from contracts
     try {
-      await pool.query(`ALTER TABLE contracts DROP COLUMN IF EXISTS application_id`);
+      await pool.query(`ALTER TABLE contracts DROP COLUMN application_id`);
     } catch (err) {
-      // Column doesn't exist or other harmless error
+      // Column doesn't exist
     }
 
     // Create or ensure the template row exists
@@ -294,7 +327,7 @@ BuildTrust Africa holds funds in escrow, releasing only upon verified milestone 
 By affixing your digital signature, you acknowledge: (1) You have read and understood this entire contract, (2) You have legal authority to execute this agreement, (3) You consent to electronic signatures as legally binding, (4) You accept all terms including breach remedies and legal jurisdiction, (5) Any disputes will follow platform arbitration before court proceedings. This is a legally enforceable contract.`;
 
         await pool.query(
-          'INSERT INTO contracts (project_id, developer_id, is_template, status, contract_terms) VALUES (NULL, NULL, TRUE, "active", ?)',
+          'INSERT INTO contracts (project_id, is_template, status, contract_terms) VALUES (NULL, TRUE, "active", ?)',
           [defaultTemplate]
         );
       }
