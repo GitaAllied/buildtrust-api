@@ -866,6 +866,33 @@ By affixing your digital signature, you acknowledge: (1) You have read and under
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
+    // Create project_milestones table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS project_milestones (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        project_id INT NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        status ENUM('not_started', 'in_progress', 'completed', 'blocked', 'delayed') DEFAULT 'not_started',
+        due_date DATE,
+        start_date DATE,
+        sequence INT NOT NULL DEFAULT 1,
+        progress_percentage INT DEFAULT 0 CHECK (progress_percentage >= 0 AND progress_percentage <= 100),
+        deliverables JSON,
+        budget_allocated DECIMAL(10,2),
+        notes TEXT,
+        completed_at TIMESTAMP NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        INDEX idx_project_id (project_id),
+        INDEX idx_status (status),
+        INDEX idx_due_date (due_date),
+        INDEX idx_sequence (sequence),
+        UNIQUE KEY unique_project_milestone_sequence (project_id, sequence)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     // Run schema migrations (idempotent - safe to run multiple times)
     try {
       await runSchemaMigrations();
