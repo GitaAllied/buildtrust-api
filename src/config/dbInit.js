@@ -383,6 +383,8 @@ By affixing your digital signature, you acknowledge: (1) You have read and under
         status ENUM('pending', 'completed', 'failed', 'refunded') DEFAULT 'pending',
         transaction_id VARCHAR(255),
         payment_method VARCHAR(100),
+        escrow_status ENUM('held', 'released', 'disputed') DEFAULT 'held',
+        escrow_released_at TIMESTAMP NULL,
         notes TEXT,
         due_date DATE,
         paid_at TIMESTAMP NULL,
@@ -395,8 +397,15 @@ By affixing your digital signature, you acknowledge: (1) You have read and under
         INDEX idx_payer_id (payer_id),
         INDEX idx_payee_id (payee_id),
         INDEX idx_status (status),
+        INDEX idx_escrow_status (escrow_status),
         INDEX idx_due_date (due_date)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    await pool.query(`
+      ALTER TABLE payments
+        ADD COLUMN IF NOT EXISTS escrow_status ENUM('held', 'released', 'disputed') DEFAULT 'held',
+        ADD COLUMN IF NOT EXISTS escrow_released_at TIMESTAMP NULL
     `);
 
     // Create payment_methods table
@@ -863,33 +872,6 @@ By affixing your digital signature, you acknowledge: (1) You have read and under
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
         INDEX idx_updated_at (updated_at)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-
-    // Create project_milestones table
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS project_milestones (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        project_id INT NOT NULL,
-        title VARCHAR(255) NOT NULL,
-        description TEXT,
-        status ENUM('not_started', 'in_progress', 'completed', 'blocked', 'delayed') DEFAULT 'not_started',
-        due_date DATE,
-        start_date DATE,
-        sequence INT NOT NULL DEFAULT 1,
-        progress_percentage INT DEFAULT 0 CHECK (progress_percentage >= 0 AND progress_percentage <= 100),
-        deliverables JSON,
-        budget_allocated DECIMAL(10,2),
-        notes TEXT,
-        completed_at TIMESTAMP NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-        INDEX idx_project_id (project_id),
-        INDEX idx_status (status),
-        INDEX idx_due_date (due_date),
-        INDEX idx_sequence (sequence),
-        UNIQUE KEY unique_project_milestone_sequence (project_id, sequence)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 

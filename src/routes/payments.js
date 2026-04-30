@@ -3,6 +3,7 @@ import {
   getClientPaymentsSummary,
   getTransactionHistory,
   recordPayment,
+  releaseEscrow,
   addPaymentMethod,
   listPaymentMethods,
   updatePaymentMethod,
@@ -20,6 +21,9 @@ router.get('/transactions', authenticateToken, getTransactionHistory);
 
 // Record a new payment
 router.post('/record', authenticateToken, recordPayment);
+
+// Release funds from escrow
+router.post('/release', authenticateToken, releaseEscrow);
 
 // Payment methods
 router.get('/methods', authenticateToken, listPaymentMethods);

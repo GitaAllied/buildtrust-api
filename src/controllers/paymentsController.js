@@ -74,7 +74,7 @@ export const getClientPaymentsSummary = async (req, res) => {
 
         // Get payments for this contract
         const [payments] = await pool.query(
-          `SELECT id, amount, payment_type, status, payment_method, paid_at, created_at 
+          `SELECT id, amount, payment_type, status, escrow_status, payment_method, paid_at, created_at 
            FROM payments WHERE contract_id = ? ORDER BY created_at DESC`,
           [contract.id]
         );
@@ -86,11 +86,18 @@ export const getClientPaymentsSummary = async (req, res) => {
             .reduce((sum, p) => sum + parseFloat(p.amount), 0);
         }
 
+        const escrowHeldAmount = Array.isArray(payments)
+          ? payments
+              .filter(p => p.escrow_status === 'held')
+              .reduce((sum, p) => sum + parseFloat(p.amount), 0)
+          : 0;
+
         return {
           id: project.id,
           title: project.title || 'Untitled Project',
           totalAmount,
           paidAmount,
+          escrowHeldAmount,
           budget: project.budget,
           description: project.description,
           status: project.status,
@@ -111,12 +118,12 @@ export const getClientPaymentsSummary = async (req, res) => {
 
     // Get all transactions for this user
     const [transactions] = await pool.query(
-      `SELECT p.id, p.amount, p.payment_type, p.status, p.payment_method, p.paid_at, 
+      `SELECT p.id, p.amount, p.payment_type, p.status, p.escrow_status, p.payment_method, p.paid_at, 
               pr.title as project_name, c.id as contract_id
        FROM payments p
        JOIN contracts c ON p.contract_id = c.id
        JOIN projects pr ON c.project_id = pr.id
-       WHERE pr.client_id = ? AND p.status = 'completed'
+       WHERE pr.client_id = ?
        ORDER BY p.paid_at DESC, p.created_at DESC
        LIMIT 100`,
       [userId]
@@ -129,6 +136,7 @@ export const getClientPaymentsSummary = async (req, res) => {
         .filter(m => m.status === 'pending')
         .reduce((mSum, m) => mSum + m.amount, 0);
     }, 0);
+    const escrowBalance = enrichedProjects.reduce((sum, p) => sum + (p.escrowHeldAmount || 0), 0);
 
     res.json({
       projects: enrichedProjects,
@@ -139,11 +147,13 @@ export const getClientPaymentsSummary = async (req, res) => {
         amount: parseFloat(t.amount),
         date: t.paid_at ? t.paid_at.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
         status: t.status,
+        escrowStatus: t.escrow_status,
         method: t.payment_method || 'Bank Transfer',
       })),
       summary: {
         totalInvested,
         pendingPayments,
+        escrowBalance,
         projectsCount: enrichedProjects.length,
       }
     });
@@ -241,14 +251,15 @@ export const recordPayment = async (req, res) => {
 
     // Record payment
     const [result] = await pool.query(
-      `INSERT INTO payments (contract_id, payer_id, payee_id, amount, payment_type, payment_method, due_date, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      `INSERT INTO payments (contract_id, payer_id, payee_id, amount, payment_type, payment_method, due_date, status, escrow_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'held')`,
       [contract_id, userId, payeeId, amount, payment_type || 'milestone', payment_method || 'bank_transfer', due_date]
     );
 
     res.json({
       message: 'Payment recorded successfully',
       payment_id: result.insertId,
+      escrow_status: 'held',
     });
   } catch (error) {
     console.error('Error recording payment:', error);
@@ -256,6 +267,47 @@ export const recordPayment = async (req, res) => {
       return res.status(403).json({ error: 'Invalid token' });
     }
     res.status(500).json({ error: 'An error occurred while recording payment' });
+  }
+};
+
+export const releaseEscrow = async (req, res) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Access token required' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
+    const userId = decoded.userId || decoded.id;
+    const { payment_id } = req.body;
+
+    if (!payment_id) return res.status(400).json({ error: 'payment_id is required' });
+
+    const [payments] = await pool.query(
+      `SELECT p.id, p.status, p.escrow_status, c.client_id
+       FROM payments p
+       JOIN contracts c ON p.contract_id = c.id
+       WHERE p.id = ? LIMIT 1`,
+      [payment_id]
+    );
+
+    const payment = payments?.[0];
+    if (!payment) return res.status(404).json({ error: 'Payment not found' });
+    if (payment.client_id !== userId) return res.status(403).json({ error: 'Unauthorized' });
+    if (payment.escrow_status !== 'held') return res.status(400).json({ error: 'Escrow is not currently held' });
+
+    await pool.query(
+      `UPDATE payments SET status = 'completed', escrow_status = 'released', escrow_released_at = CURRENT_TIMESTAMP, paid_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [payment_id]
+    );
+
+    res.json({ message: 'Escrow released successfully', payment_id });
+  } catch (error) {
+    console.error('Error releasing escrow:', error);
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+    res.status(500).json({ error: 'An error occurred while releasing escrow' });
   }
 };
 

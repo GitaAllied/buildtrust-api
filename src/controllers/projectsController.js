@@ -154,7 +154,7 @@ export const getAllProjects = async (req, res) => {
     const [projects] = await pool.query(
       `SELECT 
         p.id, p.client_id, p.developer_id, p.title, p.type, p.location, 
-        p.budget, p.budget_min, p.budget_max, p.description, p.status,
+        p.budget, p.budget_min, p.budget_max, p.description, p.status, p.acceptance_status,
         p.created_at, p.updated_at,
         uc.name as client_name,
         ud.name as developer_name,
@@ -1770,6 +1770,7 @@ export const getAllContracts = async (req, res) => {
         c.id,
         c.project_id,
         c.status,
+        c.contract_terms,
         c.needs_resign,
         c.developer_signature_url,
         c.client_signature_url,
@@ -1783,6 +1784,8 @@ export const getAllContracts = async (req, res) => {
         p.budget,
         p.client_id,
         p.developer_id,
+        p.assigned_at,
+        p.acceptance_status,
         u.name AS developer_name,
         u.profile_image AS developer_profile_image
        FROM contracts c
