@@ -42,7 +42,7 @@ export const getUserNotifications = async (req, res) => {
           n.data,
           n.is_read,
           n.created_at,
-          ${pool.escapeId('is_read')} = FALSE as unread
+          IF(n.is_read = 0, TRUE, FALSE) as unread
         FROM notifications n
         WHERE n.user_id = ? 
         AND n.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
@@ -136,6 +136,57 @@ export const getRecentMessages = async (req, res) => {
   } catch (error) {
     console.error('Get recent messages error:', error);
     res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+};
+
+export const requestInspectionNotification = async (req, res) => {
+  try {
+    const { projectId } = req.body;
+    const userId = req.user.userId;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'Project ID is required' });
+    }
+
+    const [projects] = await pool.query(
+      `SELECT id, title, client_id, developer_id FROM projects WHERE id = ? LIMIT 1`,
+      [projectId]
+    );
+
+    if (!Array.isArray(projects) || projects.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const project = projects[0];
+    if (req.user.role === 'client') {
+      if (project.client_id !== userId) {
+        return res.status(403).json({ error: 'Unauthorized to request inspection for this project' });
+      }
+    } else if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only clients and admins can request inspections' });
+    }
+
+    if (!project.developer_id) {
+      return res.status(400).json({ error: 'Project has no assigned developer yet' });
+    }
+
+    await pool.query(
+      'UPDATE projects SET inspection_requested = TRUE WHERE id = ?',
+      [projectId]
+    );
+
+    await createNotification(
+      project.developer_id,
+      'inspection_request',
+      'Inspection Requested',
+      `A client has requested an inspection for project "${project.title}".`,
+      { projectId }
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error requesting inspection notification:', error);
+    res.status(500).json({ error: 'Failed to request inspection notification' });
   }
 };
 

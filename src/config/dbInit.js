@@ -166,10 +166,11 @@ export async function initializeDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     
-    // Ensure projects table has assigned_at and acceptance_status columns
+    // Ensure projects table has assigned_at, acceptance_status, and inspection_requested columns
     const projectColumnsToAdd = [
       { name: 'assigned_at', def: 'TIMESTAMP NULL' },
-      { name: 'acceptance_status', def: "VARCHAR(50) DEFAULT 'pending'" }
+      { name: 'acceptance_status', def: "VARCHAR(50) DEFAULT 'pending'" },
+      { name: 'inspection_requested', def: 'BOOLEAN DEFAULT FALSE' }
     ];
     
     for (const col of projectColumnsToAdd) {

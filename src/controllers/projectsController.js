@@ -262,7 +262,7 @@ export const getProjectById = async (req, res) => {
     const [projects] = await pool.query(
       `SELECT id, client_id, developer_id, title, description, message, location, building_type, 
               budget, budget_min, budget_max, start_date, duration, 
-              status, acceptance_status, assigned_at, created_at, updated_at 
+              status, acceptance_status, assigned_at, inspection_requested, created_at, updated_at 
        FROM projects WHERE id = ?`,
       [projectId]
     );
@@ -1313,26 +1313,27 @@ export const getDeveloperActiveProjects = async (req, res) => {
     // Fetch only ACCEPTED projects assigned to this developer
     const [projects] = await pool.query(
       `SELECT 
-        id, 
-        client_id, 
-        title, 
-        message,
-        description,
-        location, 
-        building_type, 
-        budget, 
-        budget_min, 
-        budget_max, 
-        start_date, 
-        duration, 
-        status,
-        acceptance_status,
-        assigned_at,
-        created_at, 
-        updated_at 
-       FROM projects 
-       WHERE developer_id = ? AND acceptance_status = 'accepted'
-       ORDER BY updated_at DESC, created_at DESC`,
+        p.id, 
+        p.client_id, 
+        p.title, 
+        p.message,
+        p.description,
+        p.location, 
+        p.building_type, 
+        p.budget, 
+        p.budget_min, 
+        p.budget_max, 
+        p.start_date, 
+        p.duration, 
+        p.status,
+        p.acceptance_status,
+        p.assigned_at,
+        p.inspection_requested,
+        p.created_at, 
+        p.updated_at
+       FROM projects p
+       WHERE p.developer_id = ? AND p.acceptance_status = 'accepted'
+       ORDER BY p.updated_at DESC, p.created_at DESC`,
       [developerId]
     );
 

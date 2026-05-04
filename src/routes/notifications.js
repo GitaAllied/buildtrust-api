@@ -1,10 +1,13 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
-import { getUserNotifications, getRecentMessages, markNotificationAsRead, deleteNotification, cleanupExpiredNotifications } from '../controllers/notificationsController.js';
+import { getUserNotifications, getRecentMessages, markNotificationAsRead, deleteNotification, cleanupExpiredNotifications, requestInspectionNotification } from '../controllers/notificationsController.js';
 
 const router = express.Router();
 
 // More specific routes first (notification-specific operations)
+// POST /api/notifications/inspection-request - request an inspection via notification
+router.post('/inspection-request', authenticateToken, requestInspectionNotification);
+
 // PUT /api/notifications/:notificationId/read - mark notification as read
 router.put('/:notificationId/read', authenticateToken, markNotificationAsRead);
 
