@@ -115,13 +115,14 @@ export const uploadProjectMedia = async (req, res) => {
       return res.status(400).json({ error: 'No file provided' });
     }
 
-    // Verify project belongs to user
+    // Verify project belongs to user or is assigned to the developer
     const [projects] = await pool.query(
-      'SELECT client_id FROM projects WHERE id = ?',
+      'SELECT client_id, developer_id FROM projects WHERE id = ?',
       [projectId]
     );
 
-    if (!projects || !projects[0] || projects[0].client_id !== userId) {
+    const project = projects?.[0];
+    if (!project || (project.client_id !== userId && project.developer_id !== userId)) {
       return res.status(403).json({ error: 'Unauthorized: Project does not belong to this user' });
     }
 
@@ -1310,7 +1311,7 @@ export const getDeveloperActiveProjects = async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
     const developerId = decoded.userId || decoded.id;
 
-    // Fetch only ACCEPTED projects assigned to this developer
+    // Fetch only ACCEPTED projects assigned to this developer that are currently in progress
     const [projects] = await pool.query(
       `SELECT 
         p.id, 
@@ -1332,7 +1333,7 @@ export const getDeveloperActiveProjects = async (req, res) => {
         p.created_at, 
         p.updated_at
        FROM projects p
-       WHERE p.developer_id = ? AND p.acceptance_status = 'accepted'
+       WHERE p.developer_id = ? AND p.acceptance_status = 'accepted' AND p.status = 'in_progress'
        ORDER BY p.updated_at DESC, p.created_at DESC`,
       [developerId]
     );
