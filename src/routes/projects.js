@@ -24,7 +24,9 @@ import {
   getContractTemplate,
   updateContractTemplate,
   getAllContracts,
-  getContractById
+  getClientContracts,
+  getContractById,
+  downloadContractPDF
 } from '../controllers/projectsController.js';
 import multer from 'multer';
 import path from 'path';
@@ -149,6 +151,8 @@ const uploadRequest = multer({
 router.get('/admin/all', getAllProjects);
 router.get('/admin/contracts', getAllContracts);
 router.get('/admin/contracts/:contractId', getContractById);
+router.get('/contracts', getClientContracts);
+router.get('/contracts/:contractId/download', downloadContractPDF);
 router.get('/developer/assigned', getDeveloperProjects);
 router.get('/developer/active', getDeveloperActiveProjects);
 router.get('/contract-template', getContractTemplate);

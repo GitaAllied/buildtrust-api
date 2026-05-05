@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createNotification } from './notificationsController.js';
+import PDFDocument from 'pdfkit';
 
 // Helper function to create or update contract for a project
 const ensureContractExists = async (projectId, projectData) => {
@@ -1807,6 +1808,189 @@ export const getAllContracts = async (req, res) => {
     }
     console.error('❌ getAllContracts error:', error);
     res.status(500).json({ error: 'An error occurred while fetching contracts', details: error.message });
+  }
+};
+
+export const getClientContracts = async (req, res) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ error: 'Access token required' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
+    const userId = decoded.userId || decoded.id;
+
+    const [contracts] = await pool.query(
+      `SELECT 
+        c.id,
+        c.project_id,
+        c.status,
+        c.contract_terms,
+        c.needs_resign,
+        c.developer_signature_url,
+        c.client_signature_url,
+        c.developer_signed_at,
+        c.client_signed_at,
+        c.created_at,
+        c.updated_at,
+        p.title AS project_title,
+        p.location AS project_location,
+        p.budget,
+        p.budget_min,
+        p.budget_max,
+        p.start_date,
+        p.duration,
+        p.client_id,
+        p.developer_id,
+        p.assigned_at,
+        p.acceptance_status,
+        u.name AS developer_name,
+        u.profile_image AS developer_profile_image,
+        c_user.name AS client_name,
+        c_user.profile_image AS client_profile_image
+       FROM contracts c
+       LEFT JOIN projects p ON c.project_id = p.id
+       LEFT JOIN users u ON p.developer_id = u.id
+       LEFT JOIN users c_user ON p.client_id = c_user.id
+       WHERE c.is_template = FALSE
+         AND p.client_id = ?
+         AND c.status = 'active'
+         AND p.status = 'in_progress'
+       ORDER BY c.created_at DESC`,
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      contracts: contracts || []
+    });
+  } catch (error) {
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+    console.error('❌ getClientContracts error:', error);
+    res.status(500).json({ error: 'An error occurred while fetching client contracts', details: error.message });
+  }
+};
+
+// Download contract PDF with signatures
+export const downloadContractPDF = async (req, res) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ error: 'Access token required' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
+    const userId = decoded.userId || decoded.id;
+    const userRole = decoded.role || decoded.userRole;
+    const { contractId } = req.params;
+
+    // Get contract with project and user details
+    const [contracts] = await pool.query(
+      `SELECT 
+        c.id,
+        c.project_id,
+        c.status,
+        c.contract_terms,
+        c.developer_signature_url,
+        c.client_signature_url,
+        c.developer_signed_at,
+        c.client_signed_at,
+        p.title AS project_title,
+        p.description,
+        p.budget,
+        p.start_date,
+        p.duration,
+        p.client_id,
+        p.developer_id,
+        uc.name AS client_name,
+        uc.email AS client_email,
+        ud.name AS developer_name,
+        ud.email AS developer_email
+       FROM contracts c
+       LEFT JOIN projects p ON c.project_id = p.id
+       LEFT JOIN users uc ON p.client_id = uc.id
+       LEFT JOIN users ud ON p.developer_id = ud.id
+       WHERE c.id = ? AND c.is_template = FALSE`,
+      [contractId]
+    );
+
+    if (!contracts || contracts.length === 0) {
+      return res.status(404).json({ error: 'Contract not found' });
+    }
+
+    const contract = contracts[0];
+
+    // Verify user has access (client or developer for this contract)
+    const isClient = contract.client_id === userId;
+    const isDeveloper = contract.developer_id === userId;
+    const isAdmin = userRole === 'admin' || userRole === 'sub_admin';
+
+    if (!isClient && !isDeveloper && !isAdmin) {
+      return res.status(403).json({ error: 'Unauthorized: You do not have access to this contract' });
+    }
+
+    // Check if both signatures are present
+    if (!contract.developer_signature_url || !contract.client_signature_url ||
+        !contract.developer_signed_at || !contract.client_signed_at) {
+      return res.status(400).json({ error: 'Contract signatures are incomplete. Both parties must sign before downloading.' });
+    }
+
+    // Generate PDF
+    const PDFDocument = (await import('pdfkit')).default;
+    const doc = new PDFDocument();
+
+    // Set response headers for PDF download
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="contract-${contract.project_title.replace(/[^a-zA-Z0-9]/g, '-')}-${contract.id}.pdf"`);
+
+    // Pipe PDF to response
+    doc.pipe(res);
+
+    // Add contract content
+    doc.fontSize(20).text('PROJECT CONTRACT', { align: 'center' });
+    doc.moveDown();
+
+    doc.fontSize(16).text(`Project: ${contract.project_title}`);
+    doc.moveDown();
+
+    doc.fontSize(12);
+    doc.text(`Contract ID: ${contract.id}`);
+    doc.text(`Client: ${contract.client_name} (${contract.client_email})`);
+    doc.text(`Developer: ${contract.developer_name} (${contract.developer_email})`);
+    doc.text(`Project Budget: $${contract.budget ? Number(contract.budget).toLocaleString() : 'N/A'}`);
+    doc.text(`Start Date: ${contract.start_date ? new Date(contract.start_date).toLocaleDateString() : 'Not set'}`);
+    doc.text(`Duration: ${contract.duration ? `${contract.duration} months` : 'Not set'}`);
+    doc.moveDown();
+
+    doc.fontSize(14).text('Contract Terms:');
+    doc.fontSize(12).text(contract.contract_terms || 'Standard terms apply.');
+    doc.moveDown();
+
+    // Add signature section
+    doc.fontSize(14).text('Signatures:');
+    doc.moveDown();
+
+    doc.fontSize(12);
+    doc.text(`Developer Signature: Signed on ${new Date(contract.developer_signed_at).toLocaleString()}`);
+    doc.moveDown();
+
+    doc.text(`Client Signature: Signed on ${new Date(contract.client_signed_at).toLocaleString()}`);
+    doc.moveDown();
+
+    doc.fontSize(10).text('This contract is legally binding and has been signed by both parties.', { align: 'center' });
+
+    // Finalize PDF
+    doc.end();
+
+  } catch (error) {
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+    console.error('❌ downloadContractPDF error:', error);
+    res.status(500).json({ error: 'An error occurred while generating the contract PDF', details: error.message });
   }
 };
 

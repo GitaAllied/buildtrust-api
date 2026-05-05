@@ -272,11 +272,51 @@ export const cleanupExpiredNotifications = async (req, res) => {
 // Helper function: Create a notification
 export const createNotification = async (userId, type, title, message, data = null) => {
   try {
+    // Map notification types to preference keys
+    const typeToPreferenceKey = {
+      inspection_request: 'projectUpdates',
+      project_request: 'projectUpdates',
+      project_update: 'projectUpdates',
+      milestone: 'projectUpdates',
+      payment: 'paymentNotifications',
+      payment_request: 'paymentNotifications',
+      message: 'messages',
+      direct_message: 'messages',
+      marketing: 'marketingUpdates',
+      news: 'marketingUpdates',
+      announcement: 'marketingUpdates',
+    };
+
+    const preferenceKey = typeToPreferenceKey[type];
+
+    // If this notification type is tied to a preference, check if user has it enabled
+    if (preferenceKey) {
+      try {
+        const [settings] = await pool.query(
+          `SELECT notification_settings FROM settings WHERE id = 1 LIMIT 1`
+        );
+
+        if (settings && settings.length > 0 && settings[0].notification_settings) {
+          const userPrefs = JSON.parse(settings[0].notification_settings);
+          
+          // If preference is explicitly disabled, skip creating the notification
+          if (userPrefs[preferenceKey] === false) {
+            console.log(`⏭️ Notification skipped for user ${userId}: ${type} (${preferenceKey} disabled)`);
+            return null;
+          }
+        }
+      } catch (prefError) {
+        console.warn(`⚠️ Could not check notification preference for user ${userId}:`, prefError.message);
+        // Continue anyway if we can't check preferences
+      }
+    }
+
     const result = await pool.query(
       `INSERT INTO notifications (user_id, type, title, message, data, is_read, created_at) 
        VALUES (?, ?, ?, ?, ?, FALSE, NOW())`,
       [userId, type, title, message, data ? JSON.stringify(data) : null]
     );
+    console.log(`📬 Notification created for user ${userId}: ${type}`);
     return result[0];
   } catch (error) {
     console.error('Error creating notification:', error);
