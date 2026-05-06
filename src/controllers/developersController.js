@@ -67,7 +67,7 @@ export const getDevelopers = async (req, res) => {
             );
             // Get projects via contracts (projects the developer worked on) with full media
             const [contractProjects] = await connection.query(
-              `SELECT p.id as project_id, p.title, p.description, p.location, p.budget_min, p.budget_max, p.project_type, p.status as project_status, p.created_at as project_created_at, c.id as contract_id, c.status as contract_status, c.agreed_amount, c.start_date, c.end_date
+              `SELECT p.id as project_id, p.title, p.description, p.location, p.budget_min, p.budget_max, p.project_type, p.status as project_status, p.created_at as project_created_at, c.id as contract_id, c.status as contract_status, c.created_at as contract_created_at
                FROM contracts c
                JOIN projects p ON c.project_id = p.id
                WHERE c.developer_id = ?
@@ -320,10 +320,10 @@ export const getDeveloperById = async (req, res) => {
       );
       // -- Contracts + Projects: fetch projects developer worked on (via contracts)
       const [contracts] = await connection.query(
-        `SELECT p.id as project_id, p.title, p.description, p.location, p.budget, p.project_type, p.status as project_status, p.created_at as project_created_at, c.id as contract_id, c.status as contract_status, c.agreed_amount, c.start_date, c.end_date
+        `SELECT p.id as project_id, p.title, p.description, p.location, p.budget, p.project_type, p.status as project_status, p.created_at as project_created_at, c.id as contract_id, c.status as contract_status, c.created_at as contract_created_at
          FROM contracts c
          JOIN projects p ON c.project_id = p.id
-         WHERE c.developer_id = ?
+         WHERE p.developer_id = ?
          ORDER BY p.created_at DESC
          LIMIT 50`,
         [id]
@@ -359,7 +359,7 @@ export const getDeveloperById = async (req, res) => {
             project_type: row.project_type,
             location: row.location,
             budget: row.budget,
-            completion_year: row.end_date ? new Date(row.end_date).getFullYear() : null,
+            completion_year: row.contract_created_at ? new Date(row.contract_created_at).getFullYear() : null,
             status: row.project_status,
             contract_id: row.contract_id,
             contract_status: row.contract_status,
@@ -452,6 +452,23 @@ export const getDeveloperById = async (req, res) => {
       );
       const completedProjectsCount = (completedRow && completedRow[0] && completedRow[0].completed) || dev.completed_projects || 0;
 
+      const parseJsonArray = (value) => {
+        if (!value) return [];
+        if (Array.isArray(value)) return value;
+        if (typeof value === 'string') {
+          try {
+            return JSON.parse(value);
+          } catch {
+            return value.split(',').map((s) => s.trim()).filter(Boolean);
+          }
+        }
+        return [];
+      };
+
+      const projectTypes = parseJsonArray(dev.project_types);
+      const specializations = parseJsonArray(dev.specializations);
+      const buildTypes = Array.from(new Set([...(projectTypes || []), ...(specializations || [])]));
+
       // Build response object mapping DB columns to frontend-friendly fields
       const responseDeveloper = {
         id: dev.id,
@@ -470,7 +487,8 @@ export const getDeveloperById = async (req, res) => {
         response_time: dev.response_time || null,
         languages: dev.languages ? (typeof dev.languages === 'string' ? JSON.parse(dev.languages || '[]') : dev.languages) : [],
         cities_covered: dev.preferred_cities ? (typeof dev.preferred_cities === 'string' ? JSON.parse(dev.preferred_cities || '[]') : dev.preferred_cities) : [],
-        build_types: dev.project_types ? (typeof dev.project_types === 'string' ? JSON.parse(dev.project_types || '[]') : dev.project_types) : [],
+        build_types: buildTypes,
+        specializations: specializations,
         skills: skills.map(s => s.name),
         portfolio: portfolios.length > 0 ? portfolios[0] : null,
         projects: projectsWithMedia,

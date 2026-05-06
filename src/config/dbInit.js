@@ -43,7 +43,10 @@ export async function initializeDatabase() {
     const userColumnsToAdd = [
       { name: 'is_online', def: 'BOOLEAN DEFAULT FALSE' },
       { name: 'last_seen', def: 'TIMESTAMP NULL' },
-      { name: 'session_active', def: 'BOOLEAN DEFAULT FALSE' }
+      { name: 'session_active', def: 'BOOLEAN DEFAULT FALSE' },
+      { name: 'two_factor_enabled', def: 'BOOLEAN DEFAULT FALSE' },
+      { name: 'two_factor_code', def: 'VARCHAR(10) NULL' },
+      { name: 'two_factor_code_expires_at', def: 'TIMESTAMP NULL' }
     ];
     
     for (const col of userColumnsToAdd) {
@@ -56,6 +59,12 @@ export async function initializeDatabase() {
     
     try {
       await pool.query("ALTER TABLE users ADD INDEX idx_is_online (is_online)");
+    } catch (err) {
+      // Index already exists
+    }
+
+    try {
+      await pool.query("ALTER TABLE users ADD INDEX idx_two_factor_enabled (two_factor_enabled)");
     } catch (err) {
       // Index already exists
     }

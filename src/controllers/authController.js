@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import pool from '../config/database.js';
 import { z } from 'zod';
-import { sendVerificationEmail, generateVerificationToken, sendPasswordResetEmail } from '../services/email.js';
+import { sendVerificationEmail, generateVerificationToken, sendPasswordResetEmail, sendTwoFactorCodeEmail } from '../services/email.js';
 import { lookupIp } from '../services/ipGeo.js';
 
 const signupSchema = z.object({
@@ -21,6 +21,10 @@ const loginSchema = z.object({
 });
 
 // Retry helper for connection limit errors
+const generateTwoFactorCode = () => {
+  return String(Math.floor(100000 + Math.random() * 900000)).padStart(6, '0');
+};
+
 async function retryWithBackoff(fn, maxRetries = 5) {
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -157,7 +161,7 @@ export const login = async (req, res) => {
 
     // Find user
     const [users] = await pool.query(
-      'SELECT id, email, password, name, role, email_verified, setup_completed, is_active, profile_image, ip_address, current_state, current_country, trust_score, rating, total_reviews FROM users WHERE email = ?',
+      'SELECT id, email, password, name, role, email_verified, setup_completed, is_active, profile_image, ip_address, current_state, current_country, trust_score, rating, total_reviews, two_factor_enabled, two_factor_code, two_factor_code_expires_at FROM users WHERE email = ?',
       [email]
     );
 
@@ -185,6 +189,32 @@ export const login = async (req, res) => {
         user: {
           id: user.id,
           email: user.email,
+        },
+      });
+    }
+
+    const userTwoFactorEnabled = Boolean(user.two_factor_enabled);
+    if (userTwoFactorEnabled) {
+      const twoFactorCode = generateTwoFactorCode();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+      await pool.query(
+        'UPDATE users SET two_factor_code = ?, two_factor_code_expires_at = ? WHERE id = ?',
+        [twoFactorCode, expiresAt, user.id]
+      );
+
+      sendTwoFactorCodeEmail(user.email, twoFactorCode).catch((err) => {
+        console.error('❌ Failed to send 2FA email:', err);
+      });
+
+      return res.json({
+        twoFactorRequired: true,
+        message: 'Enter the code sent to your email to complete login.',
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          two_factor_enabled: true,
         },
       });
     }
@@ -254,6 +284,7 @@ export const login = async (req, res) => {
         trust_score: user.trust_score || 0,
         rating: user.rating || 0,
         total_reviews: user.total_reviews || 0,
+        two_factor_enabled: userTwoFactorEnabled,
       },
     });
   } catch (error) {
@@ -261,6 +292,145 @@ export const login = async (req, res) => {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
     res.status(500).json({ error: 'An error occurred while signing in' });
+  }
+};
+
+export const verifyTwoFactorCode = async (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Email and code are required' });
+    }
+
+    const [users] = await pool.query(
+      'SELECT id, email, password, name, role, email_verified, setup_completed, is_active, profile_image, trust_score, rating, total_reviews, two_factor_enabled, two_factor_code, two_factor_code_expires_at FROM users WHERE email = ?',
+      [email]
+    );
+
+    if (!Array.isArray(users) || users.length === 0) {
+      return res.status(401).json({ error: 'Invalid code or email' });
+    }
+
+    const user = users[0];
+    if (!user.two_factor_enabled) {
+      return res.status(400).json({ error: 'Two-factor authentication is not enabled for this account' });
+    }
+
+    if (!user.two_factor_code || !user.two_factor_code_expires_at) {
+      return res.status(400).json({ error: 'No active two-factor code found. Please request a new code.' });
+    }
+
+    const expiresAt = new Date(user.two_factor_code_expires_at);
+    if (expiresAt < new Date()) {
+      return res.status(400).json({ error: 'Two-factor code has expired. Please request a new code.' });
+    }
+
+    if (String(code).trim() !== String(user.two_factor_code).trim()) {
+      return res.status(401).json({ error: 'Invalid two-factor authentication code' });
+    }
+
+    await pool.query(
+      'UPDATE users SET two_factor_code = NULL, two_factor_code_expires_at = NULL WHERE id = ?',
+      [user.id]
+    );
+
+    const token = jwt.sign(
+      { userId: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET || 'your_secret_key',
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    const expiresAtToken = new Date();
+    expiresAtToken.setDate(expiresAtToken.getDate() + 7);
+    await pool.query('INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, ?)', [user.id, token, expiresAtToken]);
+
+    return res.json({
+      message: 'Two-factor authentication successful',
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        email_verified: Boolean(user.email_verified || false),
+        setup_completed: Boolean(user.setup_completed || false),
+        is_active: Number(user.is_active || 0),
+        profile_image: user.profile_image || null,
+        trust_score: user.trust_score || 0,
+        rating: user.rating || 0,
+        total_reviews: user.total_reviews || 0,
+        two_factor_enabled: true,
+      },
+    });
+  } catch (error) {
+    console.error('2FA verification error:', error);
+    res.status(500).json({ error: 'Failed to verify two-factor authentication code' });
+  }
+};
+
+export const resendTwoFactorCode = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const [users] = await pool.query(
+      'SELECT id, email, two_factor_enabled FROM users WHERE email = ?',
+      [email]
+    );
+
+    if (!Array.isArray(users) || users.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = users[0];
+    if (!user.two_factor_enabled) {
+      return res.status(400).json({ error: 'Two-factor authentication is not enabled for this account' });
+    }
+
+    const twoFactorCode = generateTwoFactorCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await pool.query(
+      'UPDATE users SET two_factor_code = ?, two_factor_code_expires_at = ? WHERE id = ?',
+      [twoFactorCode, expiresAt, user.id]
+    );
+
+    sendTwoFactorCodeEmail(user.email, twoFactorCode).catch((err) => {
+      console.error('❌ Failed to resend 2FA email:', err);
+    });
+
+    return res.json({ message: 'A new two-factor authentication code has been sent to your email.' });
+  } catch (error) {
+    console.error('2FA resend error:', error);
+    res.status(500).json({ error: 'Failed to resend two-factor code' });
+  }
+};
+
+export const setTwoFactorStatus = async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const { enabled } = req.body;
+    const isEnabled = Boolean(enabled);
+
+    await pool.query(
+      'UPDATE users SET two_factor_enabled = ?, two_factor_code = NULL, two_factor_code_expires_at = NULL WHERE id = ?',
+      [isEnabled, userId]
+    );
+
+    return res.json({
+      message: `Two-factor authentication has been ${isEnabled ? 'enabled' : 'disabled'}.`,
+      two_factor_enabled: isEnabled,
+    });
+  } catch (error) {
+    console.error('2FA toggle error:', error);
+    res.status(500).json({ error: 'Failed to update two-factor authentication settings' });
   }
 };
 
@@ -285,7 +455,7 @@ export const getMe = async (req, res) => {
 
     // Get user data - fetch ALL user fields including is_active, profile_image, and rating fields
     const [users] = await pool.query(
-      'SELECT id, email, name, role, phone, bio, location, created_at, email_verified, setup_completed, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages, is_active, profile_image, trust_score, rating, total_reviews FROM users WHERE id = ?',
+      'SELECT id, email, name, role, phone, bio, location, created_at, email_verified, setup_completed, company_type, years_experience, project_types, preferred_cities, budget_range, working_style, availability, specializations, languages, is_active, profile_image, trust_score, rating, total_reviews, two_factor_enabled FROM users WHERE id = ?',
       [decoded.userId]
     );
 
@@ -324,6 +494,7 @@ export const getMe = async (req, res) => {
         trust_score: user.trust_score || 0,
         rating: user.rating || 0,
         total_reviews: user.total_reviews || 0,
+        two_factor_enabled: Boolean(user.two_factor_enabled),
       }
     });
   } catch (error) {

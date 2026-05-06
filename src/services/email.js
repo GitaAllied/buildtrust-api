@@ -186,6 +186,40 @@ export const sendVerificationEmail = async (
   return result;
 };
 
+export const sendTwoFactorCodeEmail = async (toEmail, code) => {
+  const logoUrl = getLogoBase64();
+  const message = `
+<div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+    <div style="text-align: center; margin-bottom: 30px;">
+        <img src="${logoUrl}" alt="BuildTrust Africa" style="max-width: 150px; height: auto;" />
+    </div>
+    <div style="background: linear-gradient(135deg, #226F75 0%, #253E44 100%); color: white; padding: 40px 20px; text-align: center; border-radius: 8px 8px 0 0;">
+        <h1 style="font-size: 28px; font-weight: bold; margin: 0 0 10px 0;">Your BuildTrust Login Code</h1>
+        <p style="font-size: 14px; opacity: 0.9; margin: 0;">Secure two-factor authentication code</p>
+    </div>
+    <div style="background: #f8f9fa; padding: 40px 20px;">
+        <p style="margin-bottom: 20px; font-size: 15px; color: #555;">Use the code below to complete your sign in. This code expires in 10 minutes.</p>
+        <div style="margin: 20px auto; max-width: 320px; background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; text-align: center;">
+            <p style="font-size: 28px; letter-spacing: 0.2em; font-weight: 700; margin: 0;">${code}</p>
+        </div>
+        <p style="margin-top: 20px; font-size: 14px; color: #555;">If you did not request this code, please ignore this email or contact support.</p>
+    </div>
+    <div style="background: white; padding: 30px 20px; text-align: center; border-radius: 0 0 8px 8px; border-top: 1px solid #e0e0e0; font-size: 13px; color: #888;">
+        <p style="margin: 0 0 15px 0;">BuildTrust Africa</p>
+    </div>
+</div>
+  `;
+
+  console.info(`📬 Queuing 2FA code email`);
+  const result = await sendExternalEmail(
+    toEmail,
+    'Your BuildTrust Login Code',
+    message
+  );
+  console.info(`✅ 2FA code email queued successfully`);
+  return result;
+};
+
 // ------------------------------------------------------------
 // SEND PASSWORD RESET EMAIL
 // ------------------------------------------------------------
