@@ -597,18 +597,18 @@ export const submitProjectRequest = async (req, res) => {
       }
     }
 
-    const {
-      developerId,
-      projectName,
-      location,
-      buildingType,
-      budget_min,
-      budget_max,
-      startDate,
-      duration,
-      message,
-      sitePlan
-    } = req.body;
+    const developerIdRaw = req.body.developerId ?? req.body.developer_id;
+    const developerId = Number(developerIdRaw);
+    const projectName = String(req.body.projectName || '').trim();
+    const location = String(req.body.location || '').trim();
+    const buildingType = String(req.body.buildingType || '').trim();
+    const budgetMinRaw = req.body.budget_min ?? req.body.budgetMin;
+    const budgetMaxRaw = req.body.budget_max ?? req.body.budgetMax;
+    const budget_min = Number(budgetMinRaw);
+    const budget_max = Number(budgetMaxRaw);
+    const startDate = req.body.startDate || req.body.start_date || null;
+    const duration = String(req.body.duration || '').trim();
+    const message = String(req.body.message || '').trim();
 
     // Validate required fields
     if (!projectName || !location || !buildingType || !message) {
@@ -677,14 +677,24 @@ export const submitProjectRequest = async (req, res) => {
       );
       const projectId = projectResult.insertId;
 
-      // Step 2: Create contract record linking developer to the project (only if developer was assigned)
+      // Step 2: Create contract record only if a developer was assigned.
+      // The contracts table no longer stores developer_id directly on the contract.
       let contractId = null;
       if (validDeveloperId) {
+        const [templateRows] = await connection.query(
+          'SELECT contract_terms FROM contracts WHERE is_template = TRUE LIMIT 1'
+        );
+        const contractTerms = Array.isArray(templateRows) && templateRows[0]?.contract_terms ? templateRows[0].contract_terms : '';
+
         const [contractResult] = await connection.query(
           `INSERT INTO contracts (
-            developer_id, project_id, agreed_amount, status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, NOW(), NOW())`,
-          [validDeveloperId, projectId, null, 'active']
+            project_id,
+            status,
+            contract_terms,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, NOW(), NOW())`,
+          [projectId, 'active', contractTerms]
         );
         contractId = contractResult.insertId;
       }

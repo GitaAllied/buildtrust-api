@@ -126,8 +126,8 @@ app.use((err, req, res, next) => {
     }
 
     // Invalid file type from fileFilter
-    if (err.message === 'Invalid file type') {
-      return res.status(400).json({ error: 'Invalid file type. Allowed: PDF, JPG, PNG' });
+    if (err.message.startsWith('Invalid file type')) {
+      return res.status(400).json({ error: err.message });
     }
 
     // Document type validation errors from storage.destination
