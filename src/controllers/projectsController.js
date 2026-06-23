@@ -319,17 +319,33 @@ export const getProjectById = async (req, res) => {
       hours_remaining = Math.max(0, Math.ceil((deadline - now) / (60 * 60 * 1000)));
     }
 
-    // Fetch project media (first image)
-    // Include records with mime_type LIKE 'image/%' OR where mime_type is NULL (old records)
-    const [media] = await pool.query(
-      `SELECT id, url, filename FROM project_media 
-       WHERE project_id = ? AND (mime_type LIKE 'image/%' OR mime_type IS NULL OR filename LIKE '%.jpg%' OR filename LIKE '%.png%' OR filename LIKE '%.gif%') 
-       ORDER BY created_at DESC LIMIT 1`,
+    // Fetch project media (all files except signatures)
+    const [allMedia] = await pool.query(
+      `SELECT id, type, url, filename, mime_type, created_at 
+       FROM project_media 
+       WHERE project_id = ? 
+       AND type != 'signature'
+       AND (filename NOT LIKE '%signature%' OR filename IS NULL)
+       ORDER BY created_at DESC`,
       [projectId]
     );
-    const projectImage = media?.[0] || null;
 
-    console.log(`📸 Project ${projectId} media query result:`, { projectImage, mediaCount: media?.length });
+    // Also get the first image for backward compatibility (for the main project image display)
+    const firstImage = allMedia.find(m => m.mime_type?.startsWith('image/') || 
+                                         m.filename?.match(/\.(jpg|jpeg|png|gif)$/i) || 
+                                         (!m.mime_type && !m.filename)) || null;
+
+    console.log(`📸 Project ${projectId} media query result:`, { 
+      totalFiles: allMedia.length, 
+      firstImage: !!firstImage,
+      mediaItems: allMedia.map(m => ({ 
+        id: m.id,
+        type: m.type, 
+        filename: m.filename, 
+        mime_type: m.mime_type,
+        url: m.url
+      }))
+    });
 
     res.json({
       project: {
@@ -337,7 +353,8 @@ export const getProjectById = async (req, res) => {
         client,
         developer,
         hours_remaining,
-        media: projectImage,
+        media: allMedia, // Return all media files as array
+        firstImage, // Keep for backward compatibility if needed
         contract
       }
     });
@@ -686,17 +703,37 @@ export const submitProjectRequest = async (req, res) => {
         );
         const contractTerms = Array.isArray(templateRows) && templateRows[0]?.contract_terms ? templateRows[0].contract_terms : '';
 
-        const [contractResult] = await connection.query(
-          `INSERT INTO contracts (
-            project_id,
-            status,
-            contract_terms,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, NOW(), NOW())`,
-          [projectId, 'active', contractTerms]
+        const [contractInfoRows] = await connection.query(
+          "SHOW COLUMNS FROM contracts LIKE 'developer_id'"
         );
-        contractId = contractResult.insertId;
+        const contractHasDeveloperIdColumn = Array.isArray(contractInfoRows) && contractInfoRows.length > 0;
+
+        if (contractHasDeveloperIdColumn) {
+          const [contractResult] = await connection.query(
+            `INSERT INTO contracts (
+              project_id,
+              developer_id,
+              status,
+              contract_terms,
+              created_at,
+              updated_at
+            ) VALUES (?, ?, ?, ?, NOW(), NOW())`,
+            [projectId, validDeveloperId, 'active', contractTerms]
+          );
+          contractId = contractResult.insertId;
+        } else {
+          const [contractResult] = await connection.query(
+            `INSERT INTO contracts (
+              project_id,
+              status,
+              contract_terms,
+              created_at,
+              updated_at
+            ) VALUES (?, ?, ?, NOW(), NOW())`,
+            [projectId, 'active', contractTerms]
+          );
+          contractId = contractResult.insertId;
+        }
       }
 
       // Step 3: Handle file upload if provided
@@ -711,24 +748,51 @@ export const submitProjectRequest = async (req, res) => {
           const projectsDir = path.join(uploadsDir, 'projects');
           const projectDir = path.join(projectsDir, String(projectId));
 
+          console.log('📁 File upload details:', {
+            originalFilename: req.file.originalname,
+            filename: req.file.filename,
+            mimetype: req.file.mimetype,
+            size: req.file.size,
+            tempPath: req.file.path,
+            projectDir
+          });
+
           // Create project-specific directory if it doesn't exist
           if (!fs.existsSync(projectDir)) {
             fs.mkdirSync(projectDir, { recursive: true });
+            console.log('✅ Created project directory:', projectDir);
           }
 
           // Move file from temp to project folder
           const tempFilePath = req.file.path;
           const newFilePath = path.join(projectDir, req.file.filename);
+          
+          console.log('📦 Copying file from temp:', tempFilePath, 'to:', newFilePath);
           fs.copyFileSync(tempFilePath, newFilePath);
+          
+          // Verify file was copied successfully
+          if (fs.existsSync(newFilePath)) {
+            const stats = fs.statSync(newFilePath);
+            console.log('✅ File copied successfully, size:', stats.size, 'bytes');
+          } else {
+            throw new Error('File copy verification failed - file not found at destination');
+          }
           
           // Delete temp file
           fs.unlinkSync(tempFilePath);
+          console.log('🗑️ Deleted temp file');
 
           // Set media URL and filename for database
           mediaUrl = `/uploads/projects/${projectId}/${req.file.filename}`;
           filename = req.file.filename;
+          
+          console.log('✅ File processing complete:', { mediaUrl, filename });
         } catch (fileErr) {
-          console.error('Error moving uploaded file:', fileErr);
+          console.error('❌ Error moving uploaded file:', fileErr);
+          console.error('   Details:', {
+            message: fileErr.message,
+            stack: fileErr.stack
+          });
           // Don't fail the entire request if file move fails
           // Just log it and continue without the file
         }
@@ -736,6 +800,7 @@ export const submitProjectRequest = async (req, res) => {
 
       // Step 4: If file was successfully processed, create project_media record
       if (mediaUrl && filename) {
+        console.log('📝 Inserting project_media record:', { projectId, type: 'site_plan', mediaUrl, filename, mimetype: req.file?.mimetype });
         await connection.query(
           `INSERT INTO project_media (
             project_id, type, url, filename, mime_type, created_at
