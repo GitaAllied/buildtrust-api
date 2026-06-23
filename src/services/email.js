@@ -4,6 +4,29 @@ import path from "path";
 import https from "https";
 import { resolveRepoPath } from '../utils/projectRoot.js';
 
+// Email attempts tracking for debugging
+const emailAttempts = [];
+const MAX_EMAIL_LOG_ENTRIES = 100;
+
+export const getEmailDebugInfo = () => {
+  return emailAttempts.slice(-20); // Return last 20 attempts
+};
+
+const logEmailDebug = (toEmail, subject, status, details = {}) => {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    toEmail,
+    subject,
+    status,
+    ...details
+  };
+  emailAttempts.push(entry);
+  if (emailAttempts.length > MAX_EMAIL_LOG_ENTRIES) {
+    emailAttempts.shift();
+  }
+  console.info(`📧 [${status}] ${toEmail} - ${subject}`, details);
+};
+
 // Generate secure verification token
 export const generateVerificationToken = () => {
   return crypto.randomBytes(32).toString("hex");
@@ -24,13 +47,17 @@ const getLogoBase64 = () => {
 
 // Send emails via Clockly API endpoint
 const sendExternalEmail = async (toEmail, subject, htmlMessage, maxRetries = 3) => {
+  console.info(`📧 [EMAIL SERVICE] Queuing email to: ${toEmail}, Subject: "${subject}"`);
+  logEmailDebug(toEmail, subject, 'QUEUED', { maxRetries });
+  
   // Fire and forget - don't await the email sending
   Promise.resolve().then(async () => {
     let lastError;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.info(`📧 Sending email (attempt ${attempt}/${maxRetries})`);
+        console.info(`📧 [ATTEMPT ${attempt}/${maxRetries}] Sending email to ${toEmail}`);
+        logEmailDebug(toEmail, subject, `ATTEMPT_${attempt}`, { attempt, maxRetries });
         
         const emailPayload = {
           email: toEmail,
@@ -39,30 +66,34 @@ const sendExternalEmail = async (toEmail, subject, htmlMessage, maxRetries = 3) 
           from: process.env.MAIL_FROM || 'noreply@buildtrust.africa',
         };
 
-        console.info(`  ⏳ Attempting to send via Clockly API...`);
+        console.info(`  ⏳ Attempting to send via Clockly API (gitaalliedtech.com)...`);
         
         // Make request to Clockly API
         const response = await makeClocklyRequest(emailPayload);
         
-        console.info(`✅ Email sent successfully (external provider)`);
+        console.info(`✅ [SUCCESS] Email sent to ${toEmail} (response: ${response.statusCode})`);
+        logEmailDebug(toEmail, subject, 'SUCCESS', { statusCode: response.statusCode });
         return; // Success - exit function
       } catch (err) {
         lastError = err;
-        console.error(`❌ Email send attempt ${attempt} failed:`, err.message);
+        console.error(`❌ [ATTEMPT ${attempt}] Email send failed to ${toEmail}:`, err.message);
+        logEmailDebug(toEmail, subject, `FAILED_ATTEMPT_${attempt}`, { error: err.message, attempt });
         
         if (attempt < maxRetries) {
           // Wait before retrying: 3s * attempt
           const waitTime = 3000 * attempt;
-          console.info(`⏳ Retrying email send in ${waitTime}ms...`);
+          console.info(`⏳ [RETRY] Retrying in ${waitTime}ms...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
     }
     
     // All retries failed
-    console.error(`❌ All ${maxRetries} email attempts failed:`, lastError?.message);
+    console.error(`❌ [FAILED] All ${maxRetries} attempts failed for ${toEmail}:`, lastError?.message);
+    logEmailDebug(toEmail, subject, 'FAILED_ALL_RETRIES', { error: lastError?.message, maxRetries });
   }).catch(err => {
-    console.error('❌ Uncaught error in email sending:', err);
+    console.error('❌ [ERROR] Uncaught error in email sending:', err.message);
+    logEmailDebug(toEmail, subject, 'ERROR', { error: err.message });
   });
   
   return true;
@@ -228,6 +259,9 @@ export const sendPasswordResetEmail = async (
   toEmail,
   resetToken
 ) => {
+  console.info(`🔐 [PASSWORD RESET] *** FUNCTION CALLED FOR: ${toEmail} ***`);
+  console.info(`🔐 [PASSWORD RESET] Starting email send process for: ${toEmail}`);
+  
   const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/reset-password?token=${resetToken}`;
   const logoUrl = getLogoBase64();
 
@@ -271,11 +305,14 @@ export const sendPasswordResetEmail = async (
 </div>
   `;
 
-  return await sendExternalEmail(
+  console.info(`🔐 [PASSWORD RESET] Calling sendExternalEmail...`);
+  const result = await sendExternalEmail(
     toEmail,
     "Reset Your Password - BuildTrust Africa",
     message
   );
+  console.info(`🔐 [PASSWORD RESET] sendExternalEmail returned: ${result}`);
+  return result;
 };
 // ------------------------------------------------------------
 // SEND PORTFOLIO CREATION EMAIL
